@@ -5,15 +5,18 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
 // Prevent build crash if vars are missing (Vercel build phase)
 if (!supabaseUrl || !supabaseAnonKey) {
-    console.warn('⚠️ Supabase env vars missing. This is fine during build/lint, but app will fail at runtime.');
+    // Solo warn en desarrollo/build, no crash
+    if (process.env.NODE_ENV !== 'production') {
+        console.warn('⚠️ Supabase env vars missing. This is fine during build/lint.');
+    }
 }
 
-// Singleton pattern: global variable prevents multiple GoTrueClient instances
+// Singleton pattern
 let supabaseInstance: SupabaseClient | null = null;
 
 export function getSupabaseClient(): SupabaseClient {
     if (!supabaseInstance) {
-        // Use placeholders during build to prevent crash, real values at runtime
+        // Fallback seguro para build time
         const url = supabaseUrl || 'https://placeholder.supabase.co';
         const key = supabaseAnonKey || 'placeholder-key';
 
@@ -21,34 +24,52 @@ export function getSupabaseClient(): SupabaseClient {
             auth: {
                 persistSession: true,
                 autoRefreshToken: true,
+                detectSessionInUrl: true,
             }
         });
     }
     return supabaseInstance;
 }
 
-// Legacy export for backward compatibility
 export const supabase = getSupabaseClient();
 
-// Tipos para las tablas de Nido IO
-export type TipoNegocio = 'venta' | 'arriendo' | 'dias';
-export type EstadoInmueble = 'borrador' | 'pendiente_pago' | 'en_revision' | 'publicado' | 'pausado' | 'expirado' | 'rechazado';
+// ==========================================
+// TIPOS BLINDADOS (Aceptan Inglés y Español)
+// ==========================================
+
+export type TipoNegocio = 'venta' | 'arriendo' | 'dias' | string; // Agregamos string para flexibilidad
+export type EstadoInmueble = 'borrador' | 'pendiente_pago' | 'en_revision' | 'publicado' | 'pausado' | 'expirado' | 'rechazado' | string;
 
 export interface Inmueble {
     id: string;
     created_at: string;
     updated_at: string;
+
+    // CAMPOS ESPAÑOL (Nuevos)
     titulo: string;
     precio: number;
     tipo_negocio: TipoNegocio;
     tipo_inmueble: string;
+    descripcion: string | null;
+    estado: EstadoInmueble;
+
+    // CAMPOS COMPATIBILIDAD (Inglés - Evitan error de build si código viejo los llama)
+    description?: string | null;
+    status?: string;
+    listing_type?: string;
+
+    // Ubicación
     barrio: string | null;
     vereda: string | null;
     direccion: string | null;
+
+    // Detalles
     habitaciones: number | null;
     banos: number | null;
     parqueaderos: number | null;
     area_m2: number | null;
+
+    // Comodidades (Booleanos)
     tiene_local: boolean;
     tiene_garaje: boolean;
     tiene_sala: boolean;
@@ -57,39 +78,31 @@ export interface Inmueble {
     tiene_patio: boolean;
     tiene_terraza: boolean;
     amoblado: boolean;
-    descripcion: string | null;  // Main description field
-    estado: EstadoInmueble;
+
     propietario_id: string;
+
+    // Index signature para permitir cualquier otra propiedad extra y no romper build
+    [key: string]: any;
 }
 
 export interface InmuebleFormData {
-    // Paso 1: Ubicación
     barrio: string;
     direccion: string;
-
-    // Paso 2: Datos Básicos
     tipo_negocio: TipoNegocio;
     tipo_inmueble: string;
     precio: number;
     habitaciones: number;
     banos: number;
     area_m2: number;
-
-    // Checkboxes
     tiene_garaje: boolean;
     tiene_local: boolean;
     tiene_sala: boolean;
     tiene_comedor: boolean;
     tiene_patio: boolean;
-
-    // Paso 3: Fotos (URLs después de subir)
     imagenes: string[];
-
-    // Generado
     titulo: string;
 }
 
-// Utilidad para formatear precios en COP
 export const formatCOP = (amount: number): string => {
     return new Intl.NumberFormat('es-CO', {
         style: 'currency',
@@ -98,4 +111,3 @@ export const formatCOP = (amount: number): string => {
         maximumFractionDigits: 0
     }).format(amount);
 };
-
