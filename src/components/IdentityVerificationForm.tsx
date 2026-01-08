@@ -1,8 +1,7 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { Upload, X, Check, Loader2, AlertCircle, FileText } from 'lucide-react';
-// 1. IMPORTAMOS LA INSTANCIA SEGURA (Ya no usamos createClient aquí directo)
 import { supabase } from '@/lib/supabase';
 import { submitVerification } from '@/app/actions/submitVerification';
 
@@ -25,19 +24,22 @@ export default function IdentityVerificationForm({ userId, email, onVerification
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState(false);
 
-    // Referencias para resetear inputs
+    // Referencias para resetear inputs (FIX para re-upload)
     const documentoInputRef = useRef<HTMLInputElement>(null);
     const poderInputRef = useRef<HTMLInputElement>(null);
 
-    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, tipo: 'documento' | 'poder') => {
+    // Manejar selección de archivo
+    const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>, tipo: 'documento' | 'poder') => {
         const file = e.target.files?.[0];
         if (!file) return;
 
+        // Validar tamaño (Max 5MB)
         if (file.size > 5 * 1024 * 1024) {
             setError('El archivo no debe superar los 5MB');
             return;
         }
 
+        // Validar tipo
         if (!['application/pdf', 'image/jpeg', 'image/png'].includes(file.type)) {
             setError('Solo se permiten archivos PDF, JPG o PNG');
             return;
@@ -49,21 +51,27 @@ export default function IdentityVerificationForm({ userId, email, onVerification
         } else {
             setPoderFile(file);
         }
-    };
+    }, []);
 
-    const handleRemoveFile = (tipo: 'documento' | 'poder') => {
+    // FIX: Resetear archivo y el input element para permitir re-selección
+    const handleRemoveFile = useCallback((tipo: 'documento' | 'poder') => {
         if (tipo === 'documento') {
             setDocumentoFile(null);
-            if (documentoInputRef.current) documentoInputRef.current.value = '';
+            // Resetear el valor del input para permitir re-upload del mismo archivo
+            if (documentoInputRef.current) {
+                documentoInputRef.current.value = '';
+            }
         } else {
             setPoderFile(null);
-            // FIX: Reseteamos explícitamente el input del poder
-            if (poderInputRef.current) poderInputRef.current.value = '';
+            // FIX CRÍTICO: Resetear explícitamente el input del poder
+            if (poderInputRef.current) {
+                poderInputRef.current.value = '';
+            }
         }
-    };
+    }, []);
 
-    const uploadToSupabase = async (file: File, path: string) => {
-        // Usamos la instancia importada que ya es segura para el Build
+    // Subir archivo a Supabase Storage
+    const uploadToSupabase = async (file: File, path: string): Promise<string> => {
         const { data, error } = await supabase.storage
             .from('kyc-documents')
             .upload(path, file, { upsert: true });
@@ -77,6 +85,7 @@ export default function IdentityVerificationForm({ userId, email, onVerification
         return publicUrl.publicUrl;
     };
 
+    // Enviar formulario
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
@@ -90,20 +99,20 @@ export default function IdentityVerificationForm({ userId, email, onVerification
                 throw new Error('Debes subir el poder de representación');
             }
 
-            // 1. Subir Documento
+            // 1. Subir Documento a Storage
             const docExt = documentoFile.name.split('.').pop();
             const docPath = `${userId}/${tipoDocumento}_${Date.now()}.${docExt}`;
             const finalDocUrl = await uploadToSupabase(documentoFile, docPath);
 
             // 2. Subir Poder (si aplica)
-            let finalPoderUrl = null;
+            let finalPoderUrl: string | null = null;
             if (!esPropietario && poderFile) {
                 const poderExt = poderFile.name.split('.').pop();
                 const poderPath = `${userId}/poder_${Date.now()}.${poderExt}`;
                 finalPoderUrl = await uploadToSupabase(poderFile, poderPath);
             }
 
-            // 3. Guardar en BD (Server Action)
+            // 3. Guardar en BD via Server Action
             const result = await submitVerification({
                 userId,
                 email,
@@ -114,7 +123,7 @@ export default function IdentityVerificationForm({ userId, email, onVerification
             });
 
             if (!result.success) {
-                throw new Error(result.error);
+                throw new Error(result.error || 'Error al guardar verificación');
             }
 
             setSuccess(true);
@@ -130,6 +139,7 @@ export default function IdentityVerificationForm({ userId, email, onVerification
         }
     };
 
+    // Estado de éxito
     if (success) {
         return (
             <div className="bg-green-50 p-6 rounded-lg text-center border border-green-200">
