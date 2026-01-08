@@ -2,14 +2,9 @@
 
 import { useState, useRef } from 'react';
 import { Upload, X, Check, Loader2, AlertCircle, FileText } from 'lucide-react';
-import { createClient } from '@supabase/supabase-js';
+// 1. IMPORTAMOS LA INSTANCIA SEGURA (Ya no usamos createClient aquí directo)
+import { supabase } from '@/lib/supabase';
 import { submitVerification } from '@/app/actions/submitVerification';
-
-// Initialize Client-Side Supabase
-const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 interface IdentityVerificationFormProps {
     userId: string;
@@ -21,16 +16,16 @@ export default function IdentityVerificationForm({ userId, email, onVerification
     const [tipoDocumento, setTipoDocumento] = useState<'cedula' | 'nit'>('cedula');
     const [esPropietario, setEsPropietario] = useState<boolean>(true);
 
-    // File States
+    // Estados para archivos
     const [documentoFile, setDocumentoFile] = useState<File | null>(null);
     const [poderFile, setPoderFile] = useState<File | null>(null);
 
-    // UI States
+    // Estados UI
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState(false);
 
-    // Input References for Resetting
+    // Referencias para resetear inputs
     const documentoInputRef = useRef<HTMLInputElement>(null);
     const poderInputRef = useRef<HTMLInputElement>(null);
 
@@ -38,13 +33,11 @@ export default function IdentityVerificationForm({ userId, email, onVerification
         const file = e.target.files?.[0];
         if (!file) return;
 
-        // Validate Size (Max 5MB)
         if (file.size > 5 * 1024 * 1024) {
             setError('El archivo no debe superar los 5MB');
             return;
         }
 
-        // Validate Type
         if (!['application/pdf', 'image/jpeg', 'image/png'].includes(file.type)) {
             setError('Solo se permiten archivos PDF, JPG o PNG');
             return;
@@ -64,12 +57,13 @@ export default function IdentityVerificationForm({ userId, email, onVerification
             if (documentoInputRef.current) documentoInputRef.current.value = '';
         } else {
             setPoderFile(null);
-            // CRITICAL FIX: Explicitly reset the input value to allow re-uploading
+            // FIX: Reseteamos explícitamente el input del poder
             if (poderInputRef.current) poderInputRef.current.value = '';
         }
     };
 
     const uploadToSupabase = async (file: File, path: string) => {
+        // Usamos la instancia importada que ya es segura para el Build
         const { data, error } = await supabase.storage
             .from('kyc-documents')
             .upload(path, file, { upsert: true });
@@ -96,12 +90,12 @@ export default function IdentityVerificationForm({ userId, email, onVerification
                 throw new Error('Debes subir el poder de representación');
             }
 
-            // 1. Upload Identity Doc
+            // 1. Subir Documento
             const docExt = documentoFile.name.split('.').pop();
             const docPath = `${userId}/${tipoDocumento}_${Date.now()}.${docExt}`;
             const finalDocUrl = await uploadToSupabase(documentoFile, docPath);
 
-            // 2. Upload Power of Attorney (if applicable)
+            // 2. Subir Poder (si aplica)
             let finalPoderUrl = null;
             if (!esPropietario && poderFile) {
                 const poderExt = poderFile.name.split('.').pop();
@@ -109,7 +103,7 @@ export default function IdentityVerificationForm({ userId, email, onVerification
                 finalPoderUrl = await uploadToSupabase(poderFile, poderPath);
             }
 
-            // 3. Save to DB via Server Action
+            // 3. Guardar en BD (Server Action)
             const result = await submitVerification({
                 userId,
                 email,
@@ -129,7 +123,7 @@ export default function IdentityVerificationForm({ userId, email, onVerification
             }, 2000);
 
         } catch (err: any) {
-            console.error('Verification error:', err);
+            console.error('Error verificación:', err);
             setError(err.message || 'Error al enviar la verificación');
         } finally {
             setLoading(false);
@@ -158,7 +152,7 @@ export default function IdentityVerificationForm({ userId, email, onVerification
                 </p>
             </div>
 
-            {/* Document Type Selector */}
+            {/* Selector Tipo Documento */}
             <div className="grid grid-cols-2 gap-4">
                 <button
                     type="button"
@@ -182,7 +176,7 @@ export default function IdentityVerificationForm({ userId, email, onVerification
                 </button>
             </div>
 
-            {/* Main Document Upload */}
+            {/* Input Documento */}
             <div className="space-y-2">
                 <label className="block text-sm font-medium text-gray-700">
                     Foto del Documento ({tipoDocumento === 'cedula' ? 'Ambas caras' : 'RUT Actualizado'})
@@ -223,7 +217,7 @@ export default function IdentityVerificationForm({ userId, email, onVerification
                 )}
             </div>
 
-            {/* Owner Checkbox */}
+            {/* Checkbox Propietario */}
             <div className="space-y-3 pt-2">
                 <label className="flex items-center gap-2 cursor-pointer">
                     <input
@@ -236,7 +230,7 @@ export default function IdentityVerificationForm({ userId, email, onVerification
                 </label>
             </div>
 
-            {/* Power of Attorney Upload (Conditional) */}
+            {/* Input Poder (Condicional) */}
             {!esPropietario && (
                 <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
                     <label className="block text-sm font-medium text-gray-700">
