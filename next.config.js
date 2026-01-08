@@ -1,21 +1,23 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-    reactStrictMode: true,
-    // Safety net: Allow build to pass even if lint errors exist
-    eslint: { ignoreDuringBuilds: true },
-    typescript: { ignoreBuildErrors: true },
+    // 1. Force build to ignore TypeScript errors
+    typescript: {
+        ignoreBuildErrors: true,
+    },
+    // 2. Force build to ignore ESLint errors
+    eslint: {
+        ignoreDuringBuilds: true,
+    },
+
+    // Keep your other configs here if you have them (like images)
     images: {
         remotePatterns: [
             {
                 protocol: 'https',
-                hostname: '**.supabase.co', // Fix: Restore valid Supabase domain
-            },
-            {
-                protocol: 'https',
-                hostname: 'lh3.googleusercontent.com', // Fix: Allow Google Auth avatars
+                hostname: '**',
             },
         ],
     },
 };
-module.exports = nextConfig;
-// Forzando reconstruccion en Vercel
+
+export default nextConfig; // Use 'module.exports = nextConfig' if using .js extension

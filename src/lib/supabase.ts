@@ -1,50 +1,49 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+// 1. Safe extraction of Environment Variables
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-// Prevent build crash if vars are missing (Vercel build phase)
+// 2. Debugging Log (Visible in Vercel Build Logs)
 if (!supabaseUrl || !supabaseAnonKey) {
-    if (process.env.NODE_ENV !== 'production') {
-        console.warn('⚠️ Supabase env vars missing. This is fine during build/lint.');
+    if (process.env.NODE_ENV === 'production') {
+        console.warn('⚠️ Supabase environment variables are missing! Check Vercel Settings.');
     }
 }
 
-// Singleton pattern
-let supabaseInstance: SupabaseClient | null = null;
+// 3. Client Creation Strategy (Prevents build crash)
+const finalUrl = supabaseUrl || 'https://placeholder.supabase.co';
+const finalKey = supabaseAnonKey || 'placeholder-key';
 
-export function getSupabaseClient(): SupabaseClient {
-    if (!supabaseInstance) {
-        // Fallback seguro para build time
-        const url = supabaseUrl || 'https://placeholder.supabase.co';
-        const key = supabaseAnonKey || 'placeholder-key';
-
-        supabaseInstance = createClient(url, key, {
-            auth: {
-                persistSession: true,
-                autoRefreshToken: true,
-                detectSessionInUrl: true,
-            }
-        });
-    }
-    return supabaseInstance;
-}
-
-export const supabase = getSupabaseClient();
+export const supabase: SupabaseClient = createClient(finalUrl, finalKey, {
+    auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+    },
+});
 
 // ==========================================
-// TIPOS BLINDADOS (Aceptan Inglés y Español)
+// TYPES (Español/English Compatibility)
 // ==========================================
 
 export type TipoNegocio = 'venta' | 'arriendo' | 'dias' | string;
-export type EstadoInmueble = 'borrador' | 'pendiente_pago' | 'en_revision' | 'publicado' | 'pausado' | 'expirado' | 'rechazado' | string;
+export type EstadoInmueble =
+    | 'borrador'
+    | 'pendiente_pago'
+    | 'en_revision'
+    | 'publicado'
+    | 'pausado'
+    | 'expirado'
+    | 'rechazado'
+    | string;
 
 export interface Inmueble {
     id: string;
     created_at: string;
     updated_at: string;
 
-    // CAMPOS ESPAÑOL (Nuevos)
+    // CAMPOS ESPAÑOL (Principales)
     titulo: string;
     precio: number;
     tipo_negocio: TipoNegocio;
@@ -52,7 +51,7 @@ export interface Inmueble {
     descripcion: string | null;
     estado: EstadoInmueble;
 
-    // CAMPOS COMPATIBILIDAD (Inglés - Evitan error de build)
+    // COMPATIBILIDAD INGLÉS (Evita errores de tipos viejos)
     description?: string | null;
     status?: string;
     listing_type?: string;
@@ -68,7 +67,7 @@ export interface Inmueble {
     parqueaderos: number | null;
     area_m2: number | null;
 
-    // Comodidades (Booleanos)
+    // Comodidades
     tiene_local: boolean;
     tiene_garaje: boolean;
     tiene_sala: boolean;
@@ -80,7 +79,6 @@ export interface Inmueble {
 
     propietario_id: string;
 
-    // Index signature para seguridad extra
     [key: string]: any;
 }
 
@@ -103,11 +101,14 @@ export interface InmuebleFormData {
 }
 
 export const formatCOP = (amount: number): string => {
-    return new Intl.NumberFormat('es-CO', {
-        style: 'currency',
-        currency: 'COP',
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0
-    }).format(amount);
+    try {
+        return new Intl.NumberFormat('es-CO', {
+            style: 'currency',
+            currency: 'COP',
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0
+        }).format(amount);
+    } catch (error) {
+        return `$ ${amount}`;
+    }
 };
-// Forzando actualización de tipos
