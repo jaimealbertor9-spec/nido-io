@@ -110,3 +110,4 @@ export const formatCOP = (amount: number): string => {
         maximumFractionDigits: 0
     }).format(amount);
 };
+// Forzando actualización de tipos
