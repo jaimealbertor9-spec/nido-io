@@ -5,7 +5,6 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
 // Prevent build crash if vars are missing (Vercel build phase)
 if (!supabaseUrl || !supabaseAnonKey) {
-    // Solo warn en desarrollo/build, no crash
     if (process.env.NODE_ENV !== 'production') {
         console.warn('⚠️ Supabase env vars missing. This is fine during build/lint.');
     }
@@ -37,7 +36,7 @@ export const supabase = getSupabaseClient();
 // TIPOS BLINDADOS (Aceptan Inglés y Español)
 // ==========================================
 
-export type TipoNegocio = 'venta' | 'arriendo' | 'dias' | string; // Agregamos string para flexibilidad
+export type TipoNegocio = 'venta' | 'arriendo' | 'dias' | string;
 export type EstadoInmueble = 'borrador' | 'pendiente_pago' | 'en_revision' | 'publicado' | 'pausado' | 'expirado' | 'rechazado' | string;
 
 export interface Inmueble {
@@ -53,7 +52,7 @@ export interface Inmueble {
     descripcion: string | null;
     estado: EstadoInmueble;
 
-    // CAMPOS COMPATIBILIDAD (Inglés - Evitan error de build si código viejo los llama)
+    // CAMPOS COMPATIBILIDAD (Inglés - Evitan error de build)
     description?: string | null;
     status?: string;
     listing_type?: string;
@@ -81,7 +80,7 @@ export interface Inmueble {
 
     propietario_id: string;
 
-    // Index signature para permitir cualquier otra propiedad extra y no romper build
+    // Index signature para seguridad extra
     [key: string]: any;
 }
 
