@@ -21,6 +21,7 @@ export async function initiatePaymentSession(
 ) {
     console.log('🚀 [Payment] Iniciando sesión para:', userId);
 
+    // 1. MOVER VARIABLES DENTRO DE LA FUNCIÓN (Fix Build Error)
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
@@ -28,34 +29,34 @@ export async function initiatePaymentSession(
         return { success: false, error: 'Error de configuración del servidor' };
     }
 
+    // Usamos el cliente genérico para evitar errores de tipos estrictos
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     try {
-        // 1. Verificar Documentos (Usando nombres en ESPAÑOL: estado, documento_url)
+        // 2. Verificar Documentos (Usando nombres en ESPAÑOL)
+        // Usamos <any> para que TypeScript no bloquee el build si espera 'status' en inglés
         const { data: userVerifications } = await supabase
             .from('user_verifications')
-            .select('estado, documento_url') // Solo pedimos lo que existe
-            .eq('user_id', userId);
+            .select('estado, documento_url') 
+            .eq('user_id', userId) as { data: any[], error: any }; 
 
-        const isApproved = userVerifications?.some(v => v.estado === 'aprobado');
-        const hasDocuments = userVerifications?.some(v => v.documento_url !== null && v.documento_url !== '');
+        const isApproved = userVerifications?.some((v: any) => v.estado === 'aprobado');
+        const hasDocuments = userVerifications?.some((v: any) => v.documento_url !== null && v.documento_url !== '');
 
         if (!isApproved && !hasDocuments) {
-            return { success: false, error: 'Debes subir tu documento de identidad antes de pagar.' };
+             return { success: false, error: 'Debes subir tu documento de identidad antes de pagar.' };
         }
 
-        // 2. Generar Firma Wompi
+        // 3. Generar Firma Wompi
         const integritySecret = process.env.WOMPI_INTEGRITY_SECRET || 'test_integrity_MBRbt4yWMK00gTx1eDF3bu1KO3nZS8Wm';
         const publicKey = process.env.NEXT_PUBLIC_WOMPI_PUBLIC_KEY || 'pub_test_lhJMu7yJM1goapO7gmaIP97Vw0XwMT4Y';
-
+        
         const reference = generateReference(propertyId);
         const amountStr = String(AMOUNT_IN_CENTS);
         const signatureChain = reference + amountStr + CURRENCY + integritySecret;
         const signature = createHash('sha256').update(signatureChain).digest('hex');
 
-        // 3. Guardar Pago en BD
-        // IMPORTANTE: NO usamos 'user_id' ni 'usuario_id' como columnas sueltas porque NO existen en tu tabla 'pagos'.
-        // El ID del usuario va DENTRO del JSON 'datos_transaccion'.
+        // 4. Guardar Pago en BD
         const { error: insertError } = await supabase
             .from('pagos')
             .insert({
@@ -64,7 +65,7 @@ export async function initiatePaymentSession(
                 monto: AMOUNT_IN_CENTS / 100,
                 estado: 'pendiente',
                 metodo_pago: 'wompi_redirect',
-                datos_transaccion: {
+                datos_transaccion: { 
                     user_id: userId,
                     user_email: userEmail,
                     signature: signature
@@ -76,7 +77,7 @@ export async function initiatePaymentSession(
             return { success: false, error: 'Error interno al registrar el pago.' };
         }
 
-        // 4. Construir URL
+        // 5. Construir URL
         const checkoutUrl = new URL(WOMPI_CHECKOUT_URL);
         checkoutUrl.searchParams.set('public-key', publicKey);
         checkoutUrl.searchParams.set('currency', CURRENCY);
