@@ -1,128 +1,87 @@
 'use client';
 
-/**
- * NIDO IO - Wompi Payment Button (Redirect Method)
- * 
- * Single, clean component for Wompi payment integration.
- * Uses redirect to Wompi checkout page instead of embedded widget.
- */
-
 import { useState } from 'react';
-import { Loader2, CreditCard } from 'lucide-react';
 import { initiatePaymentSession } from '@/app/actions/payment';
-
-// ============================================
-// TYPES
-// ============================================
+import { Loader2 } from 'lucide-react';
 
 interface WompiButtonProps {
-    propertyId: string;
-    userEmail: string;
-    userId: string;
-    onError?: (error: string) => void;
-    disabled?: boolean;
-    className?: string;
+    amountInCents: number;
+    currency: string;
+    reference: string;
+    publicKey: string;
+    redirectUrl?: string;
+    userEmail?: string;
+    propertyId: string; // Required for DB persistence
+    userId: string;     // Required for DB persistence
 }
 
-// ============================================
-// COMPONENT
-// ============================================
-
 export default function WompiButton({
-    propertyId,
+    amountInCents,
+    currency,
+    reference, // kept for compatibility, but the server generates a secure one
+    publicKey,
+    redirectUrl,
     userEmail,
-    userId,
-    onError,
-    disabled = false,
-    className = ''
+    propertyId,
+    userId
 }: WompiButtonProps) {
-    const [isLoading, setIsLoading] = useState(false);
+    const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // ─────────────────────────────────────────────────────────────────
-    // HANDLE PAYMENT CLICK
-    // ─────────────────────────────────────────────────────────────────
     const handlePayment = async () => {
-        console.log('✅ Wompi Button Clicked (Redirect Method)');
-        console.log('   propertyId:', propertyId);
-        console.log('   userEmail:', userEmail);
-        console.log('   userId:', userId);
-
-        setIsLoading(true);
-        setError(null);
-
         try {
-            // Build redirect URL
-            const redirectUrl = `${window.location.origin}/publicar/exito`;
+            setLoading(true);
+            setError(null);
 
-            // Call server action to get checkout URL
-            console.log('📞 Calling initiatePaymentSession...');
-            const result = await initiatePaymentSession(propertyId, userEmail, userId, redirectUrl);
-
-            console.log('📦 Server response:', result);
+            // 1. Call Server Action to save to DB and generate integrity signature
+            const result = await initiatePaymentSession(
+                propertyId,
+                userEmail || 'cliente@nido.com',
+                userId,
+                redirectUrl
+            );
 
             if (!result.success || !result.data) {
-                const errorMsg = result.error || 'Error desconocido del servidor';
-                console.error('❌ Server error:', errorMsg);
-                setError(errorMsg);
-                onError?.(errorMsg);
-                setIsLoading(false);
-                return;
+                throw new Error(result.error || 'Error initiating payment');
             }
 
-            console.log('✅ Checkout URL ready, redirecting...');
-            console.log('   Reference:', result.data.reference);
-            console.log('   URL:', result.data.checkoutUrl);
-
-            // Redirect to Wompi Checkout
+            // 2. If saved correctly, redirect to Wompi
+            // Use window.location to go to the secure Wompi checkout
             window.location.href = result.data.checkoutUrl;
 
-        } catch (error: any) {
-            console.error('💥 Unexpected error:', error);
-            const errorMsg = error.message || 'Error inesperado';
-            setError(errorMsg);
-            onError?.(errorMsg);
-            setIsLoading(false);
+        } catch (err: any) {
+            console.error('Payment error:', err);
+            setError(err.message || 'An unexpected error occurred');
+            setLoading(false);
         }
     };
 
-    // ─────────────────────────────────────────────────────────────────
-    // RENDER
-    // ─────────────────────────────────────────────────────────────────
     return (
-        <>
-            {/* Error Display */}
-            {error && (
-                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-                    {error}
-                </div>
-            )}
-
-            {/* Payment Button */}
+        <div className="flex flex-col gap-2">
             <button
                 onClick={handlePayment}
-                disabled={disabled || isLoading}
-                className={`
-                    w-full flex items-center justify-center gap-2 
-                    bg-[#0057B8] hover:bg-[#004494] text-white 
-                    font-semibold py-4 px-6 rounded-xl
-                    transition-all duration-200
-                    disabled:opacity-50 disabled:cursor-not-allowed
-                    ${className}
-                `}
+                disabled={loading}
+                className="w-full bg-[#183259] hover:bg-[#122543] text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg"
             >
-                {isLoading ? (
+                {loading ? (
                     <>
                         <Loader2 className="w-5 h-5 animate-spin" />
-                        Redirigiendo a pago...
+                        Processing...
                     </>
                 ) : (
-                    <>
-                        <CreditCard className="w-5 h-5" />
-                        Pagar $10.000 COP
-                    </>
+                    'Pay with Wompi (Card / PSE)'
                 )}
             </button>
-        </>
+
+            {error && (
+                <p className="text-red-500 text-sm text-center mt-2 bg-red-50 p-2 rounded">
+                    {error}
+                </p>
+            )}
+
+            <p className="text-xs text-gray-400 text-center mt-2">
+                You will be redirected to the secure Wompi gateway
+            </p>
+        </div>
     );
 }
