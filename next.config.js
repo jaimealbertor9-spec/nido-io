@@ -1,15 +1,14 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-    // 1. Force build to ignore TypeScript errors
+    // Ignorar errores de TypeScript durante el build
     typescript: {
         ignoreBuildErrors: true,
     },
-    // 2. Force build to ignore ESLint errors
+    // Ignorar errores de ESLint durante el build
     eslint: {
         ignoreDuringBuilds: true,
     },
-
-    // Keep your other configs here if you have them (like images)
+    // Configuración de imágenes
     images: {
         remotePatterns: [
             {
@@ -20,4 +19,5 @@ const nextConfig = {
     },
 };
 
-export default nextConfig; // Use 'module.exports = nextConfig' if using .js extension
+// IMPORTANTE: Usar module.exports en lugar de export default
+module.exports = nextConfig;
