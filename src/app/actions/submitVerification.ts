@@ -6,7 +6,7 @@ import { createClient } from '@supabase/supabase-js';
 export type VerificationStatus = 'NOT_FOUND' | 'pendiente' | 'aprobado' | 'rechazado' | 'loading';
 
 // =====================================================================
-// 1. FUNCIÓN EXISTENTE (Mejorada)
+// 1. FUNCIÓN DE CARGA / ACTUALIZACIÓN
 // =====================================================================
 export async function submitVerification(data: {
     userId: string;
@@ -44,7 +44,7 @@ export async function submitVerification(data: {
 }
 
 // =====================================================================
-// 2. NUEVA FUNCIÓN: CHEQUEAR ESTADO (Faltaba esta)
+// 2. FUNCIÓN DE CONSULTA DE ESTADO
 // =====================================================================
 export async function checkUserVerificationStatus(userId: string): Promise<VerificationStatus> {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -60,7 +60,6 @@ export async function checkUserVerificationStatus(userId: string): Promise<Verif
 
         if (error || !data) return 'NOT_FOUND';
 
-        // Aseguramos que el estado retornado coincida con el tipo VerificationStatus
         const estado = data.estado as VerificationStatus;
         return estado || 'pendiente';
     } catch (error) {
@@ -70,7 +69,7 @@ export async function checkUserVerificationStatus(userId: string): Promise<Verif
 }
 
 // =====================================================================
-// 3. NUEVA FUNCIÓN: SUBIR DOCUMENTO (Faltaba esta)
+// 3. FUNCIÓN DE SUBIDA DE ARCHIVO (STORAGE + DB)
 // =====================================================================
 export async function submitVerificationDocument(
     userId: string,
@@ -83,17 +82,15 @@ export async function submitVerificationDocument(
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     try {
-        // 1. Decodificar Base64 a Buffer para subirlo
+        // 1. Decodificar Base64
         const base64Data = fileBase64.split(',')[1];
         const buffer = Buffer.from(base64Data, 'base64');
 
-        // 2. Generar ruta única: verifications/USER_ID/cedula.jpg
+        // 2. Generar ruta
         const fileExt = fileName.split('.').pop();
         const filePath = `${userId}/cedula_${Date.now()}.${fileExt}`;
 
-        // 3. Subir al Bucket 'kyc-documents' (o el que uses para documentos)
-        // Nota: Si no tienes bucket 'kyc-documents', usa 'inmuebles-images' temporalmente
-        // pero lo ideal es un bucket privado.
+        // 3. Subir al Storage
         const { data: uploadData, error: uploadError } = await supabase
             .storage
             .from('kyc-documents')
@@ -104,7 +101,6 @@ export async function submitVerificationDocument(
 
         if (uploadError) {
             console.error('Upload Error:', uploadError);
-            // Intentar fallback si el bucket kyc no existe, probar con 'verifications'
             throw new Error('Error subiendo imagen al storage');
         }
 
@@ -114,14 +110,14 @@ export async function submitVerificationDocument(
             .from('kyc-documents')
             .getPublicUrl(filePath);
 
-        // 5. Guardar registro en base de datos usando la función existente lógica
+        // 5. Guardar en DB
         const { error: dbError } = await supabase
             .from('user_verifications')
             .upsert({
                 user_id: userId,
                 documento_url: publicUrl,
                 estado: 'pendiente',
-                tipo_documento: 'cedula', // Valor por defecto
+                tipo_documento: 'cedula',
                 updated_at: new Date().toISOString()
             }, {
                 onConflict: 'user_id'
@@ -133,6 +129,32 @@ export async function submitVerificationDocument(
 
     } catch (err: any) {
         console.error('Submit Doc Error:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+// =====================================================================
+// 4. NUEVA FUNCIÓN: ELIMINAR DOCUMENTO (Para corregir errores)
+// =====================================================================
+export async function deleteVerificationDocument(userId: string) {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    try {
+        // Eliminamos el registro de la tabla
+        const { error } = await supabase
+            .from('user_verifications')
+            .delete()
+            .eq('user_id', userId);
+
+        if (error) {
+            console.error('Delete Error:', error);
+            return { success: false, error: 'Error al eliminar documento' };
+        }
+
+        return { success: true };
+    } catch (err: any) {
         return { success: false, error: err.message };
     }
 }
