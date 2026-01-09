@@ -1,198 +1,197 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { Upload, X, Check } from 'lucide-react';
-// Asegúrate de que este import sea correcto para tu proyecto:
-import { supabase } from '@/lib/supabase'; 
-import { submitVerification } from '@/app/actions/submitVerification';
+import { Loader2, Upload, X, FileImage, Check } from 'lucide-react';
+import { submitVerificationDocument } from '@/app/actions/submitVerification';
 
-interface IdentityVerificationFormProps {
-    userId: string;
-    email: string;
-    onVerificationComplete: () => void;
+interface InmuebleVerificationFormProps {
+    inmuebleId: string;
+    onDocumentUploaded: () => void;
+    documentType?: 'cedula' | 'poder'; // New optional prop, defaults to 'cedula'
 }
 
-export default function IdentityVerificationForm({ userId, email, onVerificationComplete }: IdentityVerificationFormProps) {
-    const [tipoDocumento, setTipoDocumento] = useState<'cedula' | 'nit'>('cedula');
-    const [esPropietario, setEsPropietario] = useState<boolean>(true);
-    const [documentoFile, setDocumentoFile] = useState<File | null>(null);
-    const [poderFile, setPoderFile] = useState<File | null>(null);
-    const [loading, setLoading] = useState(false);
+export default function InmuebleVerificationForm({
+    inmuebleId,
+    onDocumentUploaded,
+    documentType = 'cedula' // Default value
+}: InmuebleVerificationFormProps) {
+    const [file, setFile] = useState<File | null>(null);
+    const [preview, setPreview] = useState<string | null>(null);
+    const [isUploading, setIsUploading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState(false);
 
-    // Refs para limpiar inputs
-    const documentoInputRef = useRef<HTMLInputElement>(null);
-    const poderInputRef = useRef<HTMLInputElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
-    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, tipo: 'documento' | 'poder') => {
-        const file = e.target.files?.[0];
-        if (!file) return;
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const selectedFile = e.target.files?.[0];
+        if (!selectedFile) return;
 
-        if (file.size > 5 * 1024 * 1024) { 
-            setError('El archivo supera los 5MB');
-            e.target.value = ''; 
+        // Validation: Max 5MB
+        if (selectedFile.size > 5 * 1024 * 1024) {
+            setError('El archivo pesa más de 5MB');
             return;
         }
 
-        setError(null);
-        if (tipo === 'documento') setDocumentoFile(file);
-        else setPoderFile(file);
-    };
-
-    const handleRemoveFile = (tipo: 'documento' | 'poder') => {
-        if (tipo === 'documento') {
-            setDocumentoFile(null);
-            if (documentoInputRef.current) documentoInputRef.current.value = '';
-        } else {
-            setPoderFile(null);
-            if (poderInputRef.current) poderInputRef.current.value = '';
+        // Validation: Images only
+        if (!selectedFile.type.startsWith('image/')) {
+            setError('Solo se permiten imágenes (JPG, PNG)');
+            return;
         }
+
+        setFile(selectedFile);
+        setPreview(URL.createObjectURL(selectedFile));
+        setError(null);
+        setSuccess(false);
     };
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setLoading(true);
+    const clearFile = () => {
+        setFile(null);
+        if (preview) URL.revokeObjectURL(preview);
+        setPreview(null);
+        setError(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+
+    const handleUpload = async () => {
+        if (!file) return;
+
+        setIsUploading(true);
         setError(null);
 
         try {
-            if (!documentoFile) throw new Error('Falta el documento de identidad');
-            if (!esPropietario && !poderFile) throw new Error('Falta el poder de representación');
-
-            // 1. Subir archivos
-            const timestamp = Date.now();
-            const docName = documentoFile.name.replace(/[^a-zA-Z0-9.]/g, '_');
-            const docPath = `${userId}/doc_${timestamp}_${docName}`;
-            
-            const { error: errDoc } = await supabase.storage
-                .from('kyc-documents')
-                .upload(docPath, documentoFile, { upsert: true });
-            if (errDoc) throw new Error('Error subiendo documento: ' + errDoc.message);
-
-            const { data: publicUrlDoc } = supabase.storage.from('kyc-documents').getPublicUrl(docPath);
-
-            let poderUrl = null;
-            if (!esPropietario && poderFile) {
-                const poderName = poderFile.name.replace(/[^a-zA-Z0-9.]/g, '_');
-                const poderPath = `${userId}/poder_${timestamp}_${poderName}`;
-                const { error: errPoder } = await supabase.storage
-                    .from('kyc-documents')
-                    .upload(poderPath, poderFile, { upsert: true });
-                if (errPoder) throw new Error('Error subiendo poder: ' + errPoder.message);
-                
-                const { data: publicUrlPoder } = supabase.storage.from('kyc-documents').getPublicUrl(poderPath);
-                poderUrl = publicUrlPoder.publicUrl;
-            }
-
-            // 2. Guardar en BD (Server Action)
-            const result = await submitVerification({
-                userId,
-                email,
-                tipoDocumento,
-                documentoUrl: publicUrlDoc.publicUrl,
-                esPropietario,
-                poderUrl
+            // Convert to Base64
+            const reader = new FileReader();
+            const fileBase64 = await new Promise<string>((resolve, reject) => {
+                reader.onload = () => resolve(reader.result as string);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
             });
 
-            if (!result.success) throw new Error(result.error);
+            // Get current user ID from session context is handled in the server action, 
+            // but we need the userId argument. 
+            // NOTE: The server action expects userId. 
+            // For simplicity in this component, we'll import supabase client to get the ID strictly for the call,
+            // OR we rely on the server action to handle auth check if refactored.
+            // However, based on the provided server action signature: (userId, base64, name, type, docType).
+
+            // Let's get the user ID first
+            const { createClient } = await import('@supabase/supabase-js');
+            const supabase = createClient(
+                process.env.NEXT_PUBLIC_SUPABASE_URL!,
+                process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+            );
+            const { data: { user } } = await supabase.auth.getUser();
+
+            if (!user) {
+                throw new Error('Usuario no autenticado');
+            }
+
+            const result = await submitVerificationDocument(
+                user.id,
+                fileBase64,
+                file.name,
+                file.type,
+                documentType // Passing the specific type ('cedula' or 'poder')
+            );
+
+            if (!result.success) {
+                throw new Error(result.error || 'Error al subir documento');
+            }
 
             setSuccess(true);
-            setTimeout(onVerificationComplete, 2000);
+            setTimeout(() => {
+                clearFile();
+                onDocumentUploaded(); // Trigger parent refresh
+            }, 1500);
 
         } catch (err: any) {
             console.error(err);
-            setError(err.message || 'Error desconocido');
+            setError(err.message || 'Error al subir');
         } finally {
-            setLoading(false);
+            setIsUploading(false);
         }
     };
 
     if (success) {
         return (
-            <div className="p-6 bg-green-50 border border-green-200 rounded-lg text-center">
-                <Check className="w-12 h-12 text-green-600 mx-auto mb-2" />
-                <h3 className="text-lg font-bold text-green-800">¡Documentos Recibidos!</h3>
-                <p className="text-green-700">Procesando...</p>
+            <div className="flex flex-col items-center justify-center p-6 bg-green-50 border border-green-200 rounded-lg animate-in fade-in">
+                <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center mb-2">
+                    <Check className="w-6 h-6 text-green-600" />
+                </div>
+                <p className="text-sm font-medium text-green-800">¡Documento subido!</p>
             </div>
         );
     }
 
     return (
-        <form onSubmit={handleSubmit} className="space-y-6">
-            {/* INPUT DOCUMENTO */}
-            <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center">
-                {!documentoFile ? (
-                    <div onClick={() => documentoInputRef.current?.click()} className="cursor-pointer py-4">
-                        <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-                        <span className="text-sm text-gray-500 font-medium">Subir Cédula o NIT</span>
-                        <input 
-                            type="file" 
-                            ref={documentoInputRef} 
-                            onChange={(e) => handleFileUpload(e, 'documento')} 
-                            className="hidden" 
-                            accept=".pdf,.jpg,.jpeg,.png" 
-                        />
+        <div className="border border-dashed border-gray-300 rounded-lg p-6 bg-gray-50 hover:bg-gray-100 transition-colors text-center">
+            <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={handleFileChange}
+                className="hidden"
+                id={`file-upload-${documentType}`} // Unique ID per type
+            />
+
+            {!file ? (
+                <label
+                    htmlFor={`file-upload-${documentType}`}
+                    className="cursor-pointer flex flex-col items-center justify-center gap-2"
+                >
+                    <div className="p-3 bg-white rounded-full shadow-sm">
+                        <Upload className="w-6 h-6 text-blue-600" />
                     </div>
-                ) : (
-                    <div className="flex items-center justify-between bg-blue-50 p-3 rounded border border-blue-100">
-                        <span className="text-sm truncate max-w-[200px]">{documentoFile.name}</span>
-                        <button type="button" onClick={() => handleRemoveFile('documento')}>
-                            <X className="w-5 h-5 text-red-500 hover:text-red-700" />
+                    <div>
+                        <p className="text-sm font-medium text-slate-700">
+                            Clic para seleccionar imagen
+                        </p>
+                        <p className="text-xs text-slate-500">
+                            JPG o PNG (Máx 5MB)
+                        </p>
+                    </div>
+                </label>
+            ) : (
+                <div className="w-full">
+                    <div className="relative w-full aspect-video bg-gray-200 rounded-md overflow-hidden mb-3 border border-gray-300">
+                        {preview && (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                                src={preview}
+                                alt="Preview"
+                                className="w-full h-full object-contain"
+                            />
+                        )}
+                        <button
+                            onClick={clearFile}
+                            className="absolute top-2 right-2 p-1 bg-black/50 hover:bg-black/70 text-white rounded-full transition-colors"
+                        >
+                            <X size={16} />
                         </button>
                     </div>
-                )}
-            </div>
 
-            {/* CHECKBOX */}
-            <label className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded cursor-pointer">
-                <input 
-                    type="checkbox" 
-                    checked={!esPropietario} 
-                    onChange={(e) => setEsPropietario(!e.target.checked)}
-                    className="w-5 h-5 text-[#183259] rounded border-gray-300"
-                />
-                <span className="text-sm text-gray-700 font-medium">No soy el propietario (Requiere Poder)</span>
-            </label>
-
-            {/* INPUT PODER */}
-            {!esPropietario && (
-                <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center animate-in fade-in">
-                    {!poderFile ? (
-                        <div onClick={() => poderInputRef.current?.click()} className="cursor-pointer py-4">
-                            <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-                            <span className="text-sm text-gray-500 font-medium">Subir Poder Autenticado</span>
-                            <input 
-                                type="file" 
-                                ref={poderInputRef} 
-                                onChange={(e) => handleFileUpload(e, 'poder')} 
-                                className="hidden" 
-                                accept=".pdf,.jpg,.jpeg,.png" 
-                            />
-                        </div>
-                    ) : (
-                        <div className="flex items-center justify-between bg-blue-50 p-3 rounded border border-blue-100">
-                            <span className="text-sm truncate max-w-[200px]">{poderFile.name}</span>
-                            <button type="button" onClick={() => handleRemoveFile('poder')}>
-                                <X className="w-5 h-5 text-red-500 hover:text-red-700" />
-                            </button>
+                    {error && (
+                        <div className="mb-3 text-xs text-red-600 bg-red-50 p-2 rounded flex items-center gap-1 justify-center">
+                            <FileImage size={12} /> {error}
                         </div>
                     )}
+
+                    <button
+                        onClick={handleUpload}
+                        disabled={isUploading}
+                        className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-medium flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                    >
+                        {isUploading ? (
+                            <>
+                                <Loader2 className="w-4 h-4 animate-spin" /> Subiendo...
+                            </>
+                        ) : (
+                            'Confirmar y Subir'
+                        )}
+                    </button>
                 </div>
             )}
-
-            {error && (
-                <div className="bg-red-50 text-red-600 p-3 rounded text-sm text-center border border-red-100">
-                    {error}
-                </div>
-            )}
-
-            <button 
-                type="submit" 
-                disabled={loading}
-                className="w-full bg-[#183259] text-white py-4 rounded-lg font-bold hover:bg-[#201658] disabled:opacity-50 transition-colors"
-            >
-                {loading ? 'Subiendo Documentos...' : 'Confirmar y Continuar'}
-            </button>
-        </form>
+        </div>
     );
 }

@@ -6,63 +6,54 @@ import { Inter } from 'next/font/google';
 import {
     Loader2, ChevronLeft, ChevronRight, Sparkles,
     Phone, MessageCircle, Home, Key, DollarSign, Check, AlertCircle,
-    ShieldCheck, CreditCard, FileText, Trash2
+    ShieldCheck, CreditCard, FileText, Trash2, UserCheck
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { updateListingDetails, getListingDetails, getPropertyFeatures } from '@/app/actions/updateListingDetails';
 import { generatePropertyDescription } from '@/app/actions/generateDescription';
 import {
-    checkUserVerificationStatus,
+    getUserVerificationDocuments,
     submitVerificationDocument,
-    deleteVerificationDocument, // Importamos la nueva función
+    deleteVerificationDocument,
+    VerificationDocument,
     VerificationStatus
 } from '@/app/actions/submitVerification';
 import {
     activatePaymentForInmueble,
     hasRequiredDocument,
     getUserVerificationApprovalStatus,
-    checkUserDocumentsPendingApproval,
     type UserVerificationStatusResult
 } from '@/app/actions/inmuebleVerification';
 import { initiatePaymentSession } from '@/app/actions/payment';
 import StepFotos from '@/components/publicar/StepFotos';
 import InmuebleVerificationForm from '@/components/IdentityVerificationForm';
 
-const inter = Inter({
-    subsets: ['latin'],
-    weight: ['400', '500', '600', '700']
-});
+const inter = Inter({ subsets: ['latin'], weight: ['400', '500', '600', '700'] });
 
 export default function Paso2Page() {
     const router = useRouter();
     const params = useParams();
     const propertyId = params.id as string;
 
+    // Basic States
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [isGenerating, setIsGenerating] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [draftNotFound, setDraftNotFound] = useState(false);
-    const [isDeletingDoc, setIsDeletingDoc] = useState(false); // Estado para el borrado
 
-    // Auto-save state
-    const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
-    const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-    const priceDebounceRef = useRef<NodeJS.Timeout | null>(null);
-    const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
-    const descriptionDebounceRef = useRef<NodeJS.Timeout | null>(null);
+    // Verification & Owner Logic States
+    const [documents, setDocuments] = useState<VerificationDocument[]>([]);
+    const [deletingType, setDeletingType] = useState<string | null>(null);
+    const [isOwner, setIsOwner] = useState(true); // Checkbox state (Default: True)
 
-    // Contact state
-    const [contactSaveStatus, setContactSaveStatus] = useState<{
-        telefono: 'idle' | 'saving' | 'saved' | 'error';
-        whatsapp: 'idle' | 'saving' | 'saved' | 'error'
-    }>({ telefono: 'idle', whatsapp: 'idle' });
-    const contactSaveTimeoutRef = useRef<{ telefono: NodeJS.Timeout | null; whatsapp: NodeJS.Timeout | null }>({
-        telefono: null,
-        whatsapp: null
+    const [userVerificationApproval, setUserVerificationApproval] = useState<UserVerificationStatusResult>({
+        isApproved: false, status: 'not_found', hasAnyDocument: false
     });
 
-    // Listing details state
+    // Form Data States
+    const [userId, setUserId] = useState<string | null>(null);
+    const [userEmail, setUserEmail] = useState<string | null>(null);
     const [photosCompleted, setPhotosCompleted] = useState(false);
     const [offerType, setOfferType] = useState<'venta' | 'arriendo'>('venta');
     const [title, setTitle] = useState('');
@@ -70,288 +61,192 @@ export default function Paso2Page() {
     const [price, setPrice] = useState('');
     const [telefono, setTelefono] = useState('');
     const [whatsapp, setWhatsapp] = useState('');
-
-    // Trust & Verification state
-    const [verificationStatus, setVerificationStatus] = useState<VerificationStatus | 'loading'>('loading');
-    const [contactErrors, setContactErrors] = useState<{ telefono?: string; whatsapp?: string }>({});
-    const [hasDocumentUploaded, setHasDocumentUploaded] = useState(false);
-
-    // User verification approval state
-    const [userVerificationApproval, setUserVerificationApproval] = useState<UserVerificationStatusResult>({
-        isApproved: false,
-        status: 'not_found',
-        hasAnyDocument: false,
+    const [step1Data, setStep1Data] = useState<{ tipo_inmueble: string | null; area_m2: number | null; barrio: string | null; direccion: string | null; }>({
+        tipo_inmueble: null, area_m2: null, barrio: null, direccion: null
     });
-    const [isUserDocsPending, setIsUserDocsPending] = useState(false);
-    const [userPendingStatus, setUserPendingStatus] = useState<'pendiente' | 'pendiente_revision' | 'aprobado' | 'rechazado' | null>(null);
 
-    // Payment state
+    // Payment States
     const [isInitiatingPayment, setIsInitiatingPayment] = useState(false);
-    const [userId, setUserId] = useState<string | null>(null);
-    const [userEmail, setUserEmail] = useState<string | null>(null);
     const [inmuebleEstado, setInmuebleEstado] = useState<string>('borrador');
     const [showPaymentSuccessMessage, setShowPaymentSuccessMessage] = useState(false);
 
-    // Step 1 validation data
-    const [step1Data, setStep1Data] = useState<{
-        tipo_inmueble: string | null;
-        area_m2: number | null;
-        barrio: string | null;
-        direccion: string | null;
-    }>({ tipo_inmueble: null, area_m2: null, barrio: null, direccion: null });
-
+    // Refs
     const hasLoadedRef = useRef(false);
+    const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
 
-    // ═══════════════════════════════════════════════════════════════
-    // HELPERS & AUTO-SAVE
-    // ═══════════════════════════════════════════════════════════════
-    const autoSaveField = useCallback(async (field: 'tipo_negocio' | 'precio' | 'titulo' | 'descripcion', value: string | number) => {
-        if (!propertyId || !hasLoadedRef.current) return;
-        setAutoSaveStatus('saving');
-        try {
-            const updateData: Record<string, any> = { updated_at: new Date().toISOString() };
-            updateData[field] = value;
-            await supabase.from('inmuebles').update(updateData).eq('id', propertyId);
-            setAutoSaveStatus('saved');
-            if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current);
-            autoSaveTimeoutRef.current = setTimeout(() => setAutoSaveStatus('idle'), 2000);
-        } catch (err) {
-            console.error('[AutoSave] Error:', err);
-            setAutoSaveStatus('idle');
-        }
-    }, [propertyId]);
-
-    const saveContactField = useCallback(async (field: 'telefono_llamadas' | 'whatsapp', value: string) => {
-        if (!propertyId || !hasLoadedRef.current) return;
-        const stateKey = field === 'telefono_llamadas' ? 'telefono' : 'whatsapp';
-        setContactSaveStatus(prev => ({ ...prev, [stateKey]: 'saving' }));
-        try {
-            await supabase.from('inmuebles').update({ [field]: value.trim() || null, updated_at: new Date().toISOString() }).eq('id', propertyId);
-            setContactSaveStatus(prev => ({ ...prev, [stateKey]: 'saved' }));
-            setTimeout(() => setContactSaveStatus(prev => ({ ...prev, [stateKey]: 'idle' })), 2000);
-        } catch (err) {
-            setContactSaveStatus(prev => ({ ...prev, [stateKey]: 'error' }));
-        }
-    }, [propertyId]);
-
-    // ═══════════════════════════════════════════════════════════════
-    // DATA LOADING
-    // ═══════════════════════════════════════════════════════════════
+    // Load Data Effect
     useEffect(() => {
         const loadData = async () => {
             setIsLoading(true);
             try {
+                // 1. Fetch Property Details
                 const details = await getListingDetails(propertyId);
-                if (!details) {
-                    setDraftNotFound(true);
-                    setIsLoading(false);
-                    return;
-                }
+                if (!details) { setDraftNotFound(true); return; }
+
                 setTitle(details.title || '');
                 setDescription(details.description || '');
                 setPrice(details.price > 0 ? details.price.toString() : '');
                 setOfferType(details.offerType === 'arriendo' ? 'arriendo' : 'venta');
 
-                const { data: propertyData } = await supabase.from('inmuebles').select('*').eq('id', propertyId).single();
-                if (propertyData) {
-                    setTelefono(propertyData.telefono_llamadas || '');
-                    setWhatsapp(propertyData.whatsapp || '');
+                const { data: propData } = await supabase.from('inmuebles').select('*').eq('id', propertyId).single();
+                if (propData) {
+                    setTelefono(propData.telefono_llamadas || '');
+                    setWhatsapp(propData.whatsapp || '');
                     setStep1Data({
-                        tipo_inmueble: propertyData.tipo_inmueble || null,
-                        area_m2: propertyData.area_m2 || null,
-                        barrio: propertyData.barrio || null,
-                        direccion: propertyData.direccion || null,
+                        tipo_inmueble: propData.tipo_inmueble, area_m2: propData.area_m2, barrio: propData.barrio, direccion: propData.direccion
                     });
                 }
+
+                // 2. Fetch User & Documents
+                const { data: { user } } = await supabase.auth.getUser();
+                if (user) {
+                    setUserId(user.id);
+                    setUserEmail(user.email);
+
+                    // Fetch full list of docs (cedula + poder)
+                    const docs = await getUserVerificationDocuments(user.id);
+                    setDocuments(docs);
+
+                    const approval = await getUserVerificationApprovalStatus(user.id);
+                    setUserVerificationApproval(approval);
+                }
+
                 hasLoadedRef.current = true;
-            } catch (err) {
-                setError('Error al cargar datos.');
-            } finally {
-                setIsLoading(false);
-            }
+            } catch (e) { setError('Error cargando datos'); }
+            finally { setIsLoading(false); }
         };
         if (propertyId) loadData();
     }, [propertyId]);
 
-    // ═══════════════════════════════════════════════════════════════
-    // VERIFICATION CHECK
-    // ═══════════════════════════════════════════════════════════════
-    const checkVerificationAndUser = async () => {
-        try {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user) {
-                setUserId(user.id);
-                setUserEmail(user.email || null);
+    // Helpers
+    const autoSaveField = useCallback(async (field: string, value: any) => {
+        if (!propertyId || !hasLoadedRef.current) return;
+        setAutoSaveStatus('saving');
+        await supabase.from('inmuebles').update({ [field]: value, updated_at: new Date().toISOString() }).eq('id', propertyId);
+        setAutoSaveStatus('saved');
+        setTimeout(() => setAutoSaveStatus('idle'), 2000);
+    }, [propertyId]);
 
-                const status = await checkUserVerificationStatus(user.id);
-                setVerificationStatus(status);
+    const saveContactField = useCallback(async (field: string, value: string) => {
+        if (!propertyId || !hasLoadedRef.current) return;
+        await supabase.from('inmuebles').update({ [field]: value.trim() || null, updated_at: new Date().toISOString() }).eq('id', propertyId);
+    }, [propertyId]);
 
-                const approvalStatus = await getUserVerificationApprovalStatus(user.id);
-                setUserVerificationApproval(approvalStatus);
-
-                const pendingDocsResult = await checkUserDocumentsPendingApproval(user.id);
-                setIsUserDocsPending(pendingDocsResult.isPending);
-                setUserPendingStatus(pendingDocsResult.status);
-            } else {
-                setVerificationStatus('NOT_FOUND');
-            }
-        } catch (err) {
-            console.error('Error checking verification:', err);
-        }
-    };
-
-    useEffect(() => {
-        checkVerificationAndUser();
-    }, []);
-
-    // ═══════════════════════════════════════════════════════════════
-    // DOCUMENT MANAGEMENT (UPLOAD / DELETE)
-    // ═══════════════════════════════════════════════════════════════
+    // Handlers
     const handleDocumentUploaded = async () => {
-        // Refrescar estado cuando se sube algo
-        await checkVerificationAndUser();
-        const hasDoc = await hasRequiredDocument(propertyId);
-        setHasDocumentUploaded(hasDoc);
-        if (hasDoc) await activatePaymentForInmueble(propertyId);
-    };
-
-    const handleDeleteDocument = async () => {
         if (!userId) return;
-        if (!confirm('¿Estás seguro de que deseas eliminar este documento? Tendrás que subir uno nuevo.')) return;
-
-        setIsDeletingDoc(true);
-        try {
-            const result = await deleteVerificationDocument(userId);
-            if (result.success) {
-                // Resetear estados locales para forzar que aparezca el formulario
-                setVerificationStatus('NOT_FOUND');
-                setUserPendingStatus(null);
-                setIsUserDocsPending(false);
-                setHasDocumentUploaded(false);
-                alert('Documento eliminado. Por favor sube el correcto.');
-            } else {
-                alert('Error al eliminar: ' + result.error);
-            }
-        } catch (error) {
-            console.error('Error delete:', error);
-        } finally {
-            setIsDeletingDoc(false);
-        }
+        // Refresh document list after upload
+        const docs = await getUserVerificationDocuments(userId);
+        setDocuments(docs);
+        await activatePaymentForInmueble(propertyId);
     };
 
-    // ═══════════════════════════════════════════════════════════════
-    // VALIDATION & NAVIGATION
-    // ═══════════════════════════════════════════════════════════════
-    const getMissingFields = useCallback((): string[] => {
-        const missing: string[] = [];
-        const colombianPhoneRegex = /^\d{10}$/;
+    const handleDeleteDocument = async (tipo: string) => {
+        if (!userId) return;
+        if (!confirm(`¿Estás seguro de eliminar el documento: ${tipo}?`)) return;
 
-        if (userPendingStatus === 'pendiente_revision') {
-            missing.push('BLOQUEADO: Cuenta en revisión');
-            return missing;
+        setDeletingType(tipo);
+        const res = await deleteVerificationDocument(userId, tipo);
+        if (res.success) {
+            // Refresh list after delete to show upload form again
+            const docs = await getUserVerificationDocuments(userId);
+            setDocuments(docs);
+        } else {
+            alert(res.error);
         }
+        setDeletingType(null);
+    };
 
-        if (!step1Data.tipo_inmueble) missing.push('Tipo inmueble (Paso 1)');
-        if (!step1Data.area_m2) missing.push('Área m² (Paso 1)');
-        if (!photosCompleted) missing.push('Fotos obligatorias');
+    const getMissingFields = () => {
+        const missing = [];
         if (!title.trim()) missing.push('Título');
-        if (!description.trim()) missing.push('Descripción');
         if (!price || parseInt(price) <= 0) missing.push('Precio');
-        if (!colombianPhoneRegex.test(telefono)) missing.push('Teléfono (10 dígitos)');
-        if (!colombianPhoneRegex.test(whatsapp)) missing.push('WhatsApp (10 dígitos)');
+        if (!telefono) missing.push('Teléfono');
 
-        // Si ya está aprobado o tiene docs pendientes (cargados), no exigimos doc
-        if (userVerificationApproval.isApproved || userPendingStatus === 'pendiente') {
-            return missing;
+        // Validation: Cedula is mandatory if not approved yet
+        if (!userVerificationApproval.isApproved) {
+            const hasCedula = documents.some(d => d.tipo_documento === 'cedula');
+            if (!hasCedula) missing.push('Documento de Identidad (Cédula)');
+
+            // Note: Power of Attorney is optional if !isOwner, so we don't block validation on it.
         }
-
-        // Si es nuevo y no ha subido nada
-        if (!hasDocumentUploaded) missing.push('Documento de Identidad');
-
         return missing;
-    }, [step1Data, photosCompleted, title, description, price, telefono, whatsapp, userPendingStatus, userVerificationApproval, hasDocumentUploaded]);
-
-    const handleOfferTypeChange = (newType: 'venta' | 'arriendo') => {
-        setOfferType(newType);
-        autoSaveField('tipo_negocio', newType);
-    };
-
-    const handleGenerateDescription = async () => {
-        setIsGenerating(true);
-        try {
-            const features = await getPropertyFeatures(propertyId);
-            if (features) {
-                const result = await generatePropertyDescription(features);
-                if (result.titulo && result.descripcion) {
-                    setTitle(result.titulo);
-                    setDescription(result.descripcion);
-                    autoSaveField('titulo', result.titulo);
-                    autoSaveField('descripcion', result.descripcion);
-                }
-            }
-        } catch (err) {
-            setError('Error al generar descripción con IA');
-        } finally {
-            setIsGenerating(false);
-        }
     };
 
     const handlePayment = async () => {
-        if (getMissingFields().length > 0) {
-            setError('Faltan campos obligatorios');
-            return;
-        }
+        if (getMissingFields().length > 0) return setError('Faltan campos obligatorios');
         setIsInitiatingPayment(true);
         try {
-            await supabase.from('inmuebles').update({
-                titulo, descripcion, precio: parseInt(price), tipo_negocio: offerType,
-                telefono_llamadas: telefono, whatsapp, updated_at: new Date().toISOString()
-            }).eq('id', propertyId);
-
-            const redirectUrl = `${window.location.origin}/publicar/exito`;
-            const result = await initiatePaymentSession(propertyId, userEmail!, userId!, redirectUrl);
-
-            if (result.success && result.data) {
-                if (window.location.hostname === 'localhost') {
-                    window.open(result.data.checkoutUrl, '_blank');
-                    setIsInitiatingPayment(false);
-                } else {
-                    window.location.href = result.data.checkoutUrl;
-                }
-            }
-        } catch (err: any) {
-            setError(err.message);
-            setIsInitiatingPayment(false);
-        }
+            await supabase.from('inmuebles').update({ titulo, descripcion, precio: parseInt(price), tipo_negocio: offerType, telefono_llamadas: telefono, whatsapp }).eq('id', propertyId);
+            const res = await initiatePaymentSession(propertyId, userEmail!, userId!, `${window.location.origin}/publicar/exito`);
+            if (res.success && res.data) window.location.href = res.data.checkoutUrl;
+        } catch (e: any) { setError(e.message); setIsInitiatingPayment(false); }
     };
 
-    if (isLoading) return <div className="flex justify-center p-10"><Loader2 className="animate-spin" /></div>;
+    // Helper to render either the Upload Form or the File Card
+    const renderDocCard = (tipo: string, label: string) => {
+        const doc = documents.find(d => d.tipo_documento === tipo);
+        if (doc) {
+            return (
+                <div className="flex items-center justify-between bg-white p-3 rounded border border-blue-100 shadow-sm mb-3">
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600">
+                            <FileText size={20} />
+                        </div>
+                        <div>
+                            <p className="text-sm font-medium text-slate-900 capitalize">{label}</p>
+                            <p className="text-xs text-slate-500">Estado: {doc.estado}</p>
+                        </div>
+                    </div>
+                    <button
+                        onClick={() => handleDeleteDocument(tipo)}
+                        disabled={deletingType === tipo}
+                        className="p-2 text-red-500 hover:bg-red-50 rounded-full transition-colors"
+                        title="Eliminar documento"
+                    >
+                        {deletingType === tipo ? <Loader2 className="animate-spin" size={18} /> : <Trash2 size={18} />}
+                    </button>
+                </div>
+            );
+        }
+        // If not found, show upload form
+        return (
+            <div className="mb-4">
+                <p className="text-sm font-medium mb-2 text-slate-700">Subir {label}</p>
+                <InmuebleVerificationForm
+                    inmuebleId={propertyId}
+                    onDocumentUploaded={handleDocumentUploaded}
+                    documentType={tipo as 'cedula' | 'poder'}
+                />
+            </div>
+        );
+    };
 
-    if (draftNotFound) return <div className="p-8 text-center">Borrador no encontrado</div>;
-
-    const isFormComplete = getMissingFields().length === 0;
+    if (isLoading) return <div className="p-10 flex justify-center"><Loader2 className="animate-spin" /></div>;
 
     return (
         <div className={`${inter.className} space-y-8`}>
+            {/* Header */}
             <div>
                 <h1 className="text-2xl font-semibold text-slate-900 mb-1">Detalles y Multimedia</h1>
-                <p className="text-slate-500">Sube fotos, describe tu inmueble y establece el precio.</p>
+                <p className="text-slate-500">Completa la información de tu inmueble.</p>
             </div>
-
             {error && <div className="p-4 bg-red-50 text-red-700 rounded-md">{error}</div>}
 
+            {/* SECCIÓN 1: FOTOS */}
             <section className="bg-white border border-gray-200 rounded-md p-6">
                 <StepFotos inmuebleId={propertyId} onNext={() => setPhotosCompleted(true)} />
             </section>
 
+            {/* SECCIÓN 2: PRECIO */}
             <section className="bg-white border border-gray-200 rounded-md p-6">
                 <h2 className="text-lg font-semibold text-slate-900 mb-5">Precio y Oferta</h2>
                 <div className="grid md:grid-cols-2 gap-5">
                     <div>
                         <label className="block text-sm font-medium mb-2">Tipo de oferta</label>
                         <div className="grid grid-cols-2 gap-3">
-                            <button onClick={() => handleOfferTypeChange('venta')} className={`h-11 rounded-md border ${offerType === 'venta' ? 'bg-slate-900 text-white' : 'bg-white'}`}>Venta</button>
-                            <button onClick={() => handleOfferTypeChange('arriendo')} className={`h-11 rounded-md border ${offerType === 'arriendo' ? 'bg-slate-900 text-white' : 'bg-white'}`}>Arriendo</button>
+                            <button onClick={() => { setOfferType('venta'); autoSaveField('tipo_negocio', 'venta'); }} className={`h-11 rounded-md border ${offerType === 'venta' ? 'bg-slate-900 text-white' : 'bg-white'}`}>Venta</button>
+                            <button onClick={() => { setOfferType('arriendo'); autoSaveField('tipo_negocio', 'arriendo'); }} className={`h-11 rounded-md border ${offerType === 'arriendo' ? 'bg-slate-900 text-white' : 'bg-white'}`}>Arriendo</button>
                         </div>
                     </div>
                     <div>
@@ -361,19 +256,30 @@ export default function Paso2Page() {
                 </div>
             </section>
 
+            {/* SECCIÓN 3: DESCRIPCIÓN */}
             <section className="bg-white border border-gray-200 rounded-md p-6">
                 <div className="flex justify-between mb-5">
                     <h2 className="text-lg font-semibold text-slate-900">Descripción</h2>
-                    <button onClick={handleGenerateDescription} disabled={isGenerating} className="text-blue-600 text-sm font-medium flex items-center gap-1">
-                        {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Generar con IA
+                    <button onClick={async () => {
+                        setIsGenerating(true);
+                        const f = await getPropertyFeatures(propertyId);
+                        if (f) {
+                            const res = await generatePropertyDescription(f);
+                            if (res.titulo) { setTitle(res.titulo); autoSaveField('titulo', res.titulo); }
+                            if (res.descripcion) { setDescription(res.descripcion); autoSaveField('descripcion', res.descripcion); }
+                        }
+                        setIsGenerating(false);
+                    }} disabled={isGenerating} className="text-blue-600 text-sm font-medium flex items-center gap-1">
+                        {isGenerating ? <Loader2 className="animate-spin w-4 h-4" /> : <Sparkles className="w-4 h-4" />} Generar con IA
                     </button>
                 </div>
                 <div className="space-y-4">
-                    <input type="text" value={title} onChange={e => setTitle(e.target.value)} onBlur={() => autoSaveField('titulo', title)} placeholder="Título del anuncio" className="w-full h-11 border rounded-md px-3" />
-                    <textarea value={description} onChange={e => setDescription(e.target.value)} onBlur={() => autoSaveField('descripcion', description)} placeholder="Descripción detallada..." rows={5} className="w-full border rounded-md p-3 resize-none" />
+                    <input type="text" value={title} onChange={e => setTitle(e.target.value)} onBlur={() => autoSaveField('titulo', title)} placeholder="Título" className="w-full h-11 border rounded-md px-3" />
+                    <textarea value={description} onChange={e => setDescription(e.target.value)} onBlur={() => autoSaveField('descripcion', description)} placeholder="Descripción..." rows={5} className="w-full border rounded-md p-3 resize-none" />
                 </div>
             </section>
 
+            {/* SECCIÓN 4: CONTACTO */}
             <section className="bg-white border border-gray-200 rounded-md p-6">
                 <h2 className="text-lg font-semibold text-slate-900 mb-5">Contacto</h2>
                 <div className="grid md:grid-cols-2 gap-5">
@@ -382,74 +288,62 @@ export default function Paso2Page() {
                 </div>
             </section>
 
-            {/* SECCIÓN DE VERIFICACIÓN CORREGIDA */}
+            {/* SECCIÓN 5: VERIFICACIÓN (Adjusted Logic) */}
             <section className="bg-white border border-gray-200 rounded-md p-6">
                 <div className="flex items-center gap-2 mb-5">
                     <ShieldCheck className="w-5 h-5 text-slate-600" />
                     <h2 className="text-lg font-semibold text-slate-900">Verificación de Identidad</h2>
                 </div>
 
-                {/* CASO 1: USUARIO YA APROBADO */}
-                {userVerificationApproval.isApproved && (
-                    <div className="p-4 bg-green-50 border border-green-200 rounded-lg text-green-800 flex gap-3">
-                        <Check className="w-5 h-5 mt-1" />
+                {userVerificationApproval.isApproved ? (
+                    <div className="p-4 bg-green-50 text-green-800 rounded flex gap-2">
+                        <Check className="w-5 h-5" /> Cuenta Verificada
+                    </div>
+                ) : (
+                    <div className="space-y-6">
+                        {/* Checkbox Owner */}
+                        <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                            <input
+                                type="checkbox"
+                                id="isOwner"
+                                checked={isOwner}
+                                onChange={(e) => setIsOwner(e.target.checked)}
+                                className="w-5 h-5 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
+                            />
+                            <label htmlFor="isOwner" className="cursor-pointer">
+                                <span className="block font-medium text-slate-900">Soy el propietario del inmueble</span>
+                                <span className="block text-xs text-slate-500">Marca esta casilla si eres el dueño legal.</span>
+                            </label>
+                        </div>
+
+                        {/* 1. CEDULA (Always visible) */}
                         <div>
-                            <p className="font-medium">Cuenta verificada</p>
-                            <p className="text-sm">Ya puedes publicar sin restricciones.</p>
+                            <h3 className="text-sm font-semibold text-slate-900 mb-2">1. Documento de Identidad (Obligatorio)</h3>
+                            {renderDocCard('cedula', 'Cédula de Ciudadanía')}
                         </div>
-                    </div>
-                )}
 
-                {/* CASO 2: DOCUMENTOS PENDIENTES DE REVISIÓN (AQUÍ ESTABA EL ERROR) */}
-                {!userVerificationApproval.isApproved && userPendingStatus === 'pendiente' && (
-                    <div className="space-y-4">
-                        <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                            <h3 className="font-medium text-blue-900 mb-2">Documentos Cargados</h3>
-                            <div className="flex items-center justify-between bg-white p-3 rounded border border-blue-100 shadow-sm">
-                                <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600">
-                                        <FileText size={20} />
-                                    </div>
-                                    <div>
-                                        <p className="text-sm font-medium text-slate-900">Documento de Identidad</p>
-                                        <p className="text-xs text-slate-500">Estado: Pendiente de revisión</p>
-                                    </div>
-                                </div>
-                                <button
-                                    onClick={handleDeleteDocument}
-                                    disabled={isDeletingDoc}
-                                    className="p-2 text-red-500 hover:bg-red-50 rounded-full transition-colors"
-                                    title="Eliminar documento y volver a subir"
-                                >
-                                    {isDeletingDoc ? <Loader2 className="w-5 h-5 animate-spin" /> : <Trash2 size={18} />}
-                                </button>
+                        {/* 2. PODER (Visible only if NOT Owner) */}
+                        {!isOwner && (
+                            <div className="pt-4 border-t animate-in fade-in slide-in-from-top-2">
+                                <h3 className="text-sm font-semibold text-slate-900 mb-2">2. Poder de Representación (Opcional)</h3>
+                                <p className="text-xs text-slate-500 mb-3">
+                                    Al no ser el propietario directo, puedes adjuntar un poder (opcional).
+                                </p>
+                                {renderDocCard('poder', 'Poder Notarial')}
                             </div>
-                            <p className="text-xs text-blue-700 mt-3">
-                                * Tus documentos están guardados y listos para revisión. Si subiste el archivo incorrecto, usa el icono de basura para eliminarlo y subir uno nuevo.
-                            </p>
-                        </div>
+                        )}
                     </div>
-                )}
-
-                {/* CASO 3: USUARIO NUEVO O SIN DOCUMENTOS (MOSTRAR FORMULARIO) */}
-                {!userVerificationApproval.isApproved && userPendingStatus !== 'pendiente' && userPendingStatus !== 'pendiente_revision' && (
-                    <InmuebleVerificationForm inmuebleId={propertyId} onDocumentUploaded={handleDocumentUploaded} />
                 )}
             </section>
 
             <div className="flex justify-between pt-4 border-t">
-                <button onClick={() => router.back()} className="flex items-center gap-1 text-slate-600 font-medium">
-                    <ChevronLeft size={18} /> Atrás
-                </button>
-
+                <button onClick={() => router.back()} className="flex gap-2 items-center text-slate-600"><ChevronLeft size={18} /> Atrás</button>
                 <button
                     onClick={handlePayment}
-                    disabled={!isFormComplete || isInitiatingPayment}
-                    className={`flex items-center gap-2 px-6 py-2.5 rounded-md font-medium text-white transition-colors ${isFormComplete ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-300 cursor-not-allowed'
-                        }`}
+                    disabled={isInitiatingPayment || getMissingFields().length > 0}
+                    className={`px-6 py-2 rounded text-white font-medium ${getMissingFields().length > 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}
                 >
-                    {isInitiatingPayment ? <Loader2 className="animate-spin" /> : <CreditCard size={18} />}
-                    Pagar y Publicar ($10.000)
+                    {isInitiatingPayment ? <Loader2 className="animate-spin" /> : 'Pagar y Publicar'}
                 </button>
             </div>
         </div>
