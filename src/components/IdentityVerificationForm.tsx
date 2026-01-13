@@ -2,20 +2,14 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { Loader2, Upload, X, FileImage, Check } from 'lucide-react';
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from '@/lib/supabase'; // FIX 1: Use shared singleton - prevents "Multiple GoTrueClient instances"
 import { saveVerificationDocumentUrl } from '@/app/actions/submitVerification';
-
-// Create Supabase client for browser
-const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 interface InmuebleVerificationFormProps {
     inmuebleId: string;
     onDocumentUploaded: () => void;
     documentType?: 'cedula' | 'poder';
-    isOptional?: boolean; // NEW: Mark as optional (for Power of Attorney)
+    isOptional?: boolean; // Mark as optional (for Power of Attorney)
 }
 
 export default function InmuebleVerificationForm({
@@ -75,21 +69,33 @@ export default function InmuebleVerificationForm({
     const handleUpload = async () => {
         if (!file) return;
 
-        setIsUploading(true);
-        setError(null);
-
         try {
-            // 1. Get current user
-            const { data: { user } } = await supabase.auth.getUser();
-
-            // FIX: Check if component is still mounted before updating state
+            // Guard: Check mount status before starting
             if (!isMountedRef.current) return;
 
-            if (!user) {
-                throw new Error('Usuario no autenticado');
+            setIsUploading(true);
+            setError(null);
+
+            // FIX 3: Explicit session check BEFORE attempting upload
+            // This ensures the auth token is valid before sending data
+            const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+            // Check if component is still mounted before updating state
+            if (!isMountedRef.current) return;
+
+            if (sessionError) {
+                console.error('[IdentityVerificationForm] Session error:', sessionError);
+                throw new Error('Auth: Sesión inválida');
             }
 
-            // 2. Upload file DIRECTLY to Supabase Storage (client-side)
+            const session = sessionData?.session;
+            if (!session?.user) {
+                throw new Error('Session: Sesión expirada');
+            }
+
+            const user = session.user;
+
+            // Upload file DIRECTLY to Supabase Storage (client-side)
             const fileExt = file.name.split('.').pop();
             const filePath = `${user.id}/${documentType}_${Date.now()}.${fileExt}`;
 
@@ -100,20 +106,20 @@ export default function InmuebleVerificationForm({
                     upsert: true
                 });
 
-            // FIX: Check if component is still mounted
+            // Check if component is still mounted
             if (!isMountedRef.current) return;
 
             if (uploadError) {
-                console.error('Storage Upload Error:', uploadError);
-                throw new Error('Error subiendo imagen al servidor: ' + uploadError.message);
+                console.error('[IdentityVerificationForm] Storage Upload Error:', uploadError);
+                throw new Error('Storage: ' + uploadError.message);
             }
 
-            // 3. Get public URL
+            // Get public URL
             const { data: { publicUrl } } = supabase.storage
                 .from('kyc-documents')
                 .getPublicUrl(filePath);
 
-            // 4. Save only the URL to database via server action (lightweight call)
+            // Save only the URL to database via server action (lightweight call)
             const result = await saveVerificationDocumentUrl(
                 user.id,
                 publicUrl,
@@ -121,13 +127,14 @@ export default function InmuebleVerificationForm({
                 inmuebleId  // Pass inmuebleId to satisfy DB constraint
             );
 
-            // FIX: Check if component is still mounted
+            // Check if component is still mounted
             if (!isMountedRef.current) return;
 
             if (!result.success) {
                 throw new Error(result.error || 'Error al guardar documento');
             }
 
+            // Success!
             setSuccess(true);
             setTimeout(() => {
                 if (!isMountedRef.current) return;
@@ -136,19 +143,33 @@ export default function InmuebleVerificationForm({
             }, 1500);
 
         } catch (err: any) {
-            // FIX: Swallow AbortError silently (happens when component unmounts mid-request)
+            console.error('[IdentityVerificationForm] Upload error:', err);
+
+            // Ignore AbortError (User navigated away or cancelled request)
             if (err?.name === 'AbortError' || err?.message?.includes('aborted')) {
-                console.log('[IdentityVerificationForm] Request aborted (component unmounted)');
+                console.warn('[IdentityVerificationForm] Subida cancelada');
                 return;
             }
 
-            // FIX: Only update state if still mounted
+            // Only show feedback if still mounted
             if (!isMountedRef.current) return;
 
-            console.error('Upload process error:', err);
-            setError(err.message || 'Error al subir');
+            // User Feedback based on error type
+            const errorMessage = err?.message || '';
+
+            if (errorMessage.includes('Auth') || errorMessage.includes('Session') || errorMessage.includes('JWT')) {
+                // Auth/Session errors - prompt reload
+                alert('Tu sesión ha expirado o es inválida. Por favor, recarga la página e intenta de nuevo.');
+            } else {
+                // Generic retry message for other errors
+                alert('No se pudo subir el documento. Revisa tu conexión e inténtalo de nuevo.');
+            }
+
+            // Also set local error state for UI feedback
+            setError('Error al subir. Inténtalo de nuevo.');
+
         } finally {
-            // FIX: Only update state if still mounted
+            // GUARANTEED: Reset UI so user can try again
             if (isMountedRef.current) {
                 setIsUploading(false);
             }
