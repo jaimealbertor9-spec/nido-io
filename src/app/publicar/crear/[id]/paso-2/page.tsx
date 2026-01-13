@@ -72,15 +72,20 @@ export default function Paso2Page() {
 
     // Refs
     const hasLoadedRef = useRef(false);
+    const isMountedRef = useRef(true); // FIX: Track mount status to prevent state updates on unmounted component
     const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
 
     // Load Data Effect
     useEffect(() => {
+        isMountedRef.current = true; // FIX: Mark as mounted
+
         const loadData = async () => {
+            if (!isMountedRef.current) return;
             setIsLoading(true);
             try {
                 // 1. Fetch Property Details
                 const details = await getListingDetails(propertyId);
+                if (!isMountedRef.current) return; // FIX: Guard after async
                 if (!details) { setDraftNotFound(true); return; }
 
                 setTitle(details.title || '');
@@ -89,6 +94,7 @@ export default function Paso2Page() {
                 setOfferType(details.offerType === 'arriendo' ? 'arriendo' : 'venta');
 
                 const { data: propData } = await supabase.from('inmuebles').select('*').eq('id', propertyId).single();
+                if (!isMountedRef.current) return; // FIX: Guard after async
                 if (propData) {
                     setTelefono(propData.telefono_llamadas || '');
                     setWhatsapp(propData.whatsapp || '');
@@ -99,23 +105,39 @@ export default function Paso2Page() {
 
                 // 2. Fetch User & Documents
                 const { data: { user } } = await supabase.auth.getUser();
+                if (!isMountedRef.current) return; // FIX: Guard after async
                 if (user) {
                     setUserId(user.id);
-                    setUserEmail(user.email);
+                    setUserEmail(user.email || null);
 
                     // Fetch full list of docs (cedula + poder)
                     const docs = await getUserVerificationDocuments(user.id);
+                    if (!isMountedRef.current) return; // FIX: Guard after async
                     setDocuments(docs);
 
                     const approval = await getUserVerificationApprovalStatus(user.id);
+                    if (!isMountedRef.current) return; // FIX: Guard after async
                     setUserVerificationApproval(approval);
                 }
 
                 hasLoadedRef.current = true;
-            } catch (e) { setError('Error cargando datos'); }
-            finally { setIsLoading(false); }
+            } catch (e: any) {
+                // FIX: Suppress AbortError (happens when component unmounts mid-request)
+                if (e?.name === 'AbortError' || e?.message?.includes('aborted')) {
+                    console.log('[Paso2Page] Request aborted (safe to ignore)');
+                    return;
+                }
+                if (isMountedRef.current) setError('Error cargando datos');
+            } finally {
+                if (isMountedRef.current) setIsLoading(false);
+            }
         };
         if (propertyId) loadData();
+
+        // FIX: Cleanup function to mark as unmounted
+        return () => {
+            isMountedRef.current = false;
+        };
     }, [propertyId]);
 
     // Helpers
@@ -134,27 +156,49 @@ export default function Paso2Page() {
 
     // Handlers
     const handleDocumentUploaded = async () => {
-        if (!userId) return;
-        // Refresh document list after upload
-        const docs = await getUserVerificationDocuments(userId);
-        setDocuments(docs);
-        await activatePaymentForInmueble(propertyId);
+        if (!userId || !isMountedRef.current) return;
+        try {
+            // Refresh document list after upload
+            const docs = await getUserVerificationDocuments(userId);
+            if (!isMountedRef.current) return; // FIX: Guard after async
+            setDocuments(docs);
+            await activatePaymentForInmueble(propertyId);
+        } catch (e: any) {
+            // FIX: Suppress AbortError
+            if (e?.name === 'AbortError' || e?.message?.includes('aborted')) {
+                console.log('[Paso2Page] handleDocumentUploaded aborted (safe to ignore)');
+                return;
+            }
+            console.error('Error in handleDocumentUploaded:', e);
+        }
     };
 
     const handleDeleteDocument = async (tipo: string) => {
-        if (!userId) return;
+        if (!userId || !isMountedRef.current) return;
         if (!confirm(`¿Estás seguro de eliminar el documento: ${tipo}?`)) return;
 
         setDeletingType(tipo);
-        const res = await deleteVerificationDocument(userId, tipo);
-        if (res.success) {
-            // Refresh list after delete to show upload form again
-            const docs = await getUserVerificationDocuments(userId);
-            setDocuments(docs);
-        } else {
-            alert(res.error);
+        try {
+            const res = await deleteVerificationDocument(userId, tipo);
+            if (!isMountedRef.current) return; // FIX: Guard after async
+            if (res.success) {
+                // Refresh list after delete to show upload form again
+                const docs = await getUserVerificationDocuments(userId);
+                if (!isMountedRef.current) return; // FIX: Guard after async
+                setDocuments(docs);
+            } else {
+                alert(res.error);
+            }
+        } catch (e: any) {
+            // FIX: Suppress AbortError
+            if (e?.name === 'AbortError' || e?.message?.includes('aborted')) {
+                console.log('[Paso2Page] handleDeleteDocument aborted (safe to ignore)');
+                return;
+            }
+            console.error('Error in handleDeleteDocument:', e);
+        } finally {
+            if (isMountedRef.current) setDeletingType(null);
         }
-        setDeletingType(null);
     };
 
     const getMissingFields = () => {
@@ -177,14 +221,14 @@ export default function Paso2Page() {
         if (getMissingFields().length > 0) return setError('Faltan campos obligatorios');
         setIsInitiatingPayment(true);
         try {
-            await supabase.from('inmuebles').update({ titulo, descripcion, precio: parseInt(price), tipo_negocio: offerType, telefono_llamadas: telefono, whatsapp }).eq('id', propertyId);
+            await supabase.from('inmuebles').update({ titulo: title, descripcion: description, precio: parseInt(price), tipo_negocio: offerType, telefono_llamadas: telefono, whatsapp }).eq('id', propertyId);
             const res = await initiatePaymentSession(propertyId, userEmail!, userId!, `${window.location.origin}/publicar/exito`);
             if (res.success && res.data) window.location.href = res.data.checkoutUrl;
         } catch (e: any) { setError(e.message); setIsInitiatingPayment(false); }
     };
 
     // Helper to render either the Upload Form or the File Card
-    const renderDocCard = (tipo: string, label: string) => {
+    const renderDocCard = (tipo: string, label: string, isOptional: boolean = false) => {
         const doc = documents.find(d => d.tipo_documento === tipo);
         if (doc) {
             return (
@@ -212,11 +256,14 @@ export default function Paso2Page() {
         // If not found, show upload form
         return (
             <div className="mb-4">
-                <p className="text-sm font-medium mb-2 text-slate-700">Subir {label}</p>
+                <p className="text-sm font-medium mb-2 text-slate-700">
+                    Subir {label} {isOptional && <span className="text-blue-500 text-xs">(Opcional)</span>}
+                </p>
                 <InmuebleVerificationForm
                     inmuebleId={propertyId}
                     onDocumentUploaded={handleDocumentUploaded}
                     documentType={tipo as 'cedula' | 'poder'}
+                    isOptional={isOptional}
                 />
             </div>
         );
@@ -329,7 +376,7 @@ export default function Paso2Page() {
                                 <p className="text-xs text-slate-500 mb-3">
                                     Al no ser el propietario directo, puedes adjuntar un poder (opcional).
                                 </p>
-                                {renderDocCard('poder', 'Poder Notarial')}
+                                {renderDocCard('poder', 'Poder Notarial', true)}
                             </div>
                         )}
                     </div>

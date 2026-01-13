@@ -151,6 +151,70 @@ export async function deleteVerificationDocument(userId: string, tipoDocumento: 
     }
 }
 
+// 5. SAVE DOCUMENT URL (for client-side upload flow - lightweight, no file data)
+export async function saveVerificationDocumentUrl(
+    userId: string,
+    documentUrl: string,
+    tipoDocumento: 'cedula' | 'poder' = 'cedula',
+    inmuebleId?: string
+) {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    try {
+        // 1. Check if doc already exists for this user and type
+        const { data: existingDoc, error: fetchError } = await supabase
+            .from('user_verifications')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('tipo_documento', tipoDocumento)
+            .maybeSingle();
+
+        if (fetchError) {
+            console.error('DB Fetch Error:', fetchError);
+            return { success: false, error: 'Error verificando documentos existentes.' };
+        }
+
+        // 2. Prepare payload for upsert
+        const payload: any = {
+            user_id: userId,
+            documento_url: documentUrl,
+            estado: 'pendiente',
+            tipo_documento: tipoDocumento,
+            created_at: new Date().toISOString()
+        };
+
+        // Add inmueble_id if provided
+        if (inmuebleId) {
+            payload.inmueble_id = inmuebleId;
+        }
+
+        if (existingDoc) {
+            payload.id = existingDoc.id;
+        }
+
+        // 3. Upsert to database
+        const { error: dbError } = await supabase
+            .from('user_verifications')
+            .upsert(payload);
+
+        if (dbError) {
+            console.error('DB Upsert Error:', dbError);
+            if (dbError.code === '42703') {
+                return { success: false, error: 'Error de base de datos: Columna no encontrada.' };
+            }
+            return { success: false, error: 'Error guardando registro en base de datos.' };
+        }
+
+        return { success: true, url: documentUrl };
+
+    } catch (err: any) {
+        console.error('Critical Save Error:', err);
+        return { success: false, error: err.message || 'Error inesperado del sistema.' };
+    }
+}
+
 // Legacy support
 export async function submitVerification(data: any) {
     return { success: true };

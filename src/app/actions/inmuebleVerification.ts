@@ -265,7 +265,7 @@ export async function validateInmuebleForPayment(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// UPDATE INMUEBLE ESTADO TO 'LISTO_PARA_PAGO'
+// UPDATE INMUEBLE ESTADO TO 'PENDIENTE' (ready for payment)
 // Only updates if validation passes and current state is 'borrador'
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -311,11 +311,11 @@ export async function activatePaymentForInmueble(
             };
         }
 
-        // 4. Update to 'listo_para_pago'
+        // 4. Update to 'pendiente' (compatible with DB check constraint)
         const { error: updateError } = await supabase
             .from('inmuebles')
             .update({
-                estado: 'listo_para_pago',
+                estado: 'pendiente',
                 updated_at: new Date().toISOString(),
             })
             .eq('id', inmuebleId);
@@ -328,8 +328,8 @@ export async function activatePaymentForInmueble(
         revalidatePath(`/publicar/crear/${inmuebleId}`);
         revalidatePath(`/publicar/pago/${inmuebleId}`);
 
-        console.log(`✅ Inmueble ${inmuebleId} updated to 'listo_para_pago'`);
-        return { success: true, data: { estado: 'listo_para_pago' } };
+        console.log(`✅ Inmueble ${inmuebleId} updated to 'pendiente'`);
+        return { success: true, data: { estado: 'pendiente' } };
     } catch (err: any) {
         console.error('[activatePaymentForInmueble] Error:', err);
         return { success: false, error: err.message };

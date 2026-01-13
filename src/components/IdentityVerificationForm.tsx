@@ -1,19 +1,28 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Loader2, Upload, X, FileImage, Check } from 'lucide-react';
-import { submitVerificationDocument } from '@/app/actions/submitVerification';
+import { createClient } from '@supabase/supabase-js';
+import { saveVerificationDocumentUrl } from '@/app/actions/submitVerification';
+
+// Create Supabase client for browser
+const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 interface InmuebleVerificationFormProps {
     inmuebleId: string;
     onDocumentUploaded: () => void;
-    documentType?: 'cedula' | 'poder'; // New optional prop, defaults to 'cedula'
+    documentType?: 'cedula' | 'poder';
+    isOptional?: boolean; // NEW: Mark as optional (for Power of Attorney)
 }
 
 export default function InmuebleVerificationForm({
     inmuebleId,
     onDocumentUploaded,
-    documentType = 'cedula' // Default value
+    documentType = 'cedula',
+    isOptional = false
 }: InmuebleVerificationFormProps) {
     const [file, setFile] = useState<File | null>(null);
     const [preview, setPreview] = useState<string | null>(null);
@@ -23,13 +32,23 @@ export default function InmuebleVerificationForm({
 
     const fileInputRef = useRef<HTMLInputElement>(null);
 
+    // FIX: Track component mount status to prevent state updates on unmounted component
+    const isMountedRef = useRef(true);
+
+    useEffect(() => {
+        isMountedRef.current = true;
+        return () => {
+            isMountedRef.current = false;
+        };
+    }, []);
+
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const selectedFile = e.target.files?.[0];
         if (!selectedFile) return;
 
-        // Validation: Max 5MB
-        if (selectedFile.size > 5 * 1024 * 1024) {
-            setError('El archivo pesa más de 5MB');
+        // Validation: Max 10MB (increased limit since we're uploading directly)
+        if (selectedFile.size > 10 * 1024 * 1024) {
+            setError('El archivo pesa más de 10MB');
             return;
         }
 
@@ -60,56 +79,79 @@ export default function InmuebleVerificationForm({
         setError(null);
 
         try {
-            // Convert to Base64
-            const reader = new FileReader();
-            const fileBase64 = await new Promise<string>((resolve, reject) => {
-                reader.onload = () => resolve(reader.result as string);
-                reader.onerror = reject;
-                reader.readAsDataURL(file);
-            });
-
-            // Get current user ID from session context is handled in the server action, 
-            // but we need the userId argument. 
-            // NOTE: The server action expects userId. 
-            // For simplicity in this component, we'll import supabase client to get the ID strictly for the call,
-            // OR we rely on the server action to handle auth check if refactored.
-            // However, based on the provided server action signature: (userId, base64, name, type, docType).
-
-            // Let's get the user ID first
-            const { createClient } = await import('@supabase/supabase-js');
-            const supabase = createClient(
-                process.env.NEXT_PUBLIC_SUPABASE_URL!,
-                process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-            );
+            // 1. Get current user
             const { data: { user } } = await supabase.auth.getUser();
+
+            // FIX: Check if component is still mounted before updating state
+            if (!isMountedRef.current) return;
 
             if (!user) {
                 throw new Error('Usuario no autenticado');
             }
 
-            const result = await submitVerificationDocument(
+            // 2. Upload file DIRECTLY to Supabase Storage (client-side)
+            const fileExt = file.name.split('.').pop();
+            const filePath = `${user.id}/${documentType}_${Date.now()}.${fileExt}`;
+
+            const { error: uploadError } = await supabase.storage
+                .from('kyc-documents')
+                .upload(filePath, file, {
+                    contentType: file.type,
+                    upsert: true
+                });
+
+            // FIX: Check if component is still mounted
+            if (!isMountedRef.current) return;
+
+            if (uploadError) {
+                console.error('Storage Upload Error:', uploadError);
+                throw new Error('Error subiendo imagen al servidor: ' + uploadError.message);
+            }
+
+            // 3. Get public URL
+            const { data: { publicUrl } } = supabase.storage
+                .from('kyc-documents')
+                .getPublicUrl(filePath);
+
+            // 4. Save only the URL to database via server action (lightweight call)
+            const result = await saveVerificationDocumentUrl(
                 user.id,
-                fileBase64,
-                file.name,
-                file.type,
-                documentType // Passing the specific type ('cedula' or 'poder')
+                publicUrl,
+                documentType,
+                inmuebleId  // Pass inmuebleId to satisfy DB constraint
             );
 
+            // FIX: Check if component is still mounted
+            if (!isMountedRef.current) return;
+
             if (!result.success) {
-                throw new Error(result.error || 'Error al subir documento');
+                throw new Error(result.error || 'Error al guardar documento');
             }
 
             setSuccess(true);
             setTimeout(() => {
+                if (!isMountedRef.current) return;
                 clearFile();
                 onDocumentUploaded(); // Trigger parent refresh
             }, 1500);
 
         } catch (err: any) {
-            console.error(err);
+            // FIX: Swallow AbortError silently (happens when component unmounts mid-request)
+            if (err?.name === 'AbortError' || err?.message?.includes('aborted')) {
+                console.log('[IdentityVerificationForm] Request aborted (component unmounted)');
+                return;
+            }
+
+            // FIX: Only update state if still mounted
+            if (!isMountedRef.current) return;
+
+            console.error('Upload process error:', err);
             setError(err.message || 'Error al subir');
         } finally {
-            setIsUploading(false);
+            // FIX: Only update state if still mounted
+            if (isMountedRef.current) {
+                setIsUploading(false);
+            }
         }
     };
 
@@ -132,7 +174,7 @@ export default function InmuebleVerificationForm({
                 accept="image/jpeg,image/png,image/webp"
                 onChange={handleFileChange}
                 className="hidden"
-                id={`file-upload-${documentType}`} // Unique ID per type
+                id={`file-upload-${documentType}`}
             />
 
             {!file ? (
@@ -148,7 +190,7 @@ export default function InmuebleVerificationForm({
                             Clic para seleccionar imagen
                         </p>
                         <p className="text-xs text-slate-500">
-                            JPG o PNG (Máx 5MB)
+                            JPG o PNG (Máx 10MB) {isOptional && <span className="text-blue-500">• Opcional</span>}
                         </p>
                     </div>
                 </label>
