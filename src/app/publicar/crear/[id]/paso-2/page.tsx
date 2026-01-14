@@ -218,13 +218,77 @@ export default function Paso2Page() {
     };
 
     const handlePayment = async () => {
-        if (getMissingFields().length > 0) return setError('Faltan campos obligatorios');
+        console.log('💰 [Wompi] Starting payment process...');
+
+        // Validation: Check missing fields first
+        if (getMissingFields().length > 0) {
+            setError('Faltan campos obligatorios');
+            return;
+        }
+
+        // Environment Check: Validate Wompi Public Key
+        if (!process.env.NEXT_PUBLIC_WOMPI_PUBLIC_KEY) {
+            console.error('❌ [Wompi] Missing NEXT_PUBLIC_WOMPI_PUBLIC_KEY');
+            alert('Falta configuración de pagos (Public Key)');
+            return;
+        }
+        console.log('✅ [Wompi] Public Key found');
+
         setIsInitiatingPayment(true);
+        setError(null); // Clear any previous errors
+
         try {
-            await supabase.from('inmuebles').update({ titulo: title, descripcion: description, precio: parseInt(price), tipo_negocio: offerType, telefono_llamadas: telefono, whatsapp }).eq('id', propertyId);
-            const res = await initiatePaymentSession(propertyId, userEmail!, userId!, `${window.location.origin}/publicar/exito`);
-            if (res.success && res.data) window.location.href = res.data.checkoutUrl;
-        } catch (e: any) { setError(e.message); setIsInitiatingPayment(false); }
+            // Step 1: Save current form data to database
+            console.log('📝 [Wompi] Saving property data before payment...');
+            const { error: updateError } = await supabase
+                .from('inmuebles')
+                .update({
+                    titulo: title,
+                    descripcion: description,
+                    precio: parseInt(price),
+                    tipo_negocio: offerType,
+                    telefono_llamadas: telefono,
+                    whatsapp
+                })
+                .eq('id', propertyId);
+
+            if (updateError) {
+                throw new Error(`Error guardando datos: ${updateError.message}`);
+            }
+            console.log('✅ [Wompi] Property data saved successfully');
+
+            // Step 2: Initiate payment session
+            console.log('🔐 [Wompi] Generating integrity signature...');
+            const res = await initiatePaymentSession(
+                propertyId,
+                userEmail!,
+                userId!,
+                `${window.location.origin}/publicar/exito`
+            );
+
+            if (!res.success) {
+                throw new Error(res.error || 'Error iniciando sesión de pago');
+            }
+
+            if (!res.data?.checkoutUrl) {
+                throw new Error('No se recibió URL de pago de Wompi');
+            }
+
+            console.log('🔐 [Wompi] Integrity signature generated successfully');
+            console.log('🚀 [Wompi] Opening widget... Redirecting to:', res.data.checkoutUrl);
+
+            // Step 3: Redirect to Wompi checkout
+            window.location.href = res.data.checkoutUrl;
+
+        } catch (e: any) {
+            console.error('❌ [Wompi] Payment error:', e);
+            setError(e.message || 'Error procesando el pago. Intenta nuevamente.');
+        } finally {
+            // ALWAYS reset loading state, even if redirect happens
+            // (Browser will navigate away, but this ensures state is clean if something fails)
+            setIsInitiatingPayment(false);
+            console.log('🏁 [Wompi] Payment process finished (loading state reset)');
+        }
     };
 
     // Helper to render either the Upload Form or the File Card
