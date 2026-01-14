@@ -73,6 +73,8 @@ export default function TipoInmueblePage() {
         setError(null);
         setIsProcessing(true);
 
+        let shouldResetLoading = true; // Track if we need to reset loading state
+
         try {
             // ═══════════════════════════════════════════════════════════════
             // STEP 1: Check authentication status
@@ -86,6 +88,8 @@ export default function TipoInmueblePage() {
             // ═══════════════════════════════════════════════════════════════
             if (!session || !session.user) {
                 console.log(`🔄 [Tipo] Guest user → Redirecting to auth with type=${selectedType}`);
+                console.log('✅ [Tipo] Redirecting to Step 1...');
+                shouldResetLoading = false; // Don't reset on successful navigation
                 router.push(`/publicar/auth?intent=${intent}&type=${selectedType}`);
                 return;
             }
@@ -117,6 +121,8 @@ export default function TipoInmueblePage() {
             // ═══════════════════════════════════════════════════════════════
             if (existingDraft?.id) {
                 console.log(`📝 [Tipo] Found existing draft: ${existingDraft.id} → Resuming`);
+                console.log('✅ [Tipo] Redirecting to Step 1...');
+                shouldResetLoading = false; // Don't reset on successful navigation
                 router.push(`/publicar/crear/${existingDraft.id}/paso-1`);
                 return;
             }
@@ -128,15 +134,20 @@ export default function TipoInmueblePage() {
 
             const newDraftId = await createPropertyDraft(selectedType, userId);
             console.log(`✅ [Tipo] Draft created: ${newDraftId}`);
+            console.log('✅ [Tipo] Redirecting to Step 1...');
+            shouldResetLoading = false; // Don't reset on successful navigation
 
             router.push(`/publicar/crear/${newDraftId}/paso-1`);
 
         } catch (err: any) {
             console.error('❌ [Tipo] Error in handleContinue:', err);
             setError(err.message || 'Error al procesar. Intenta de nuevo.');
-            setIsProcessing(false);
+        } finally {
+            // Always reset loading state unless we're navigating away
+            if (shouldResetLoading) {
+                setIsProcessing(false);
+            }
         }
-        // Don't reset isProcessing on success since we're navigating
     };
 
     return (
