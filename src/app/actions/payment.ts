@@ -68,12 +68,19 @@ export async function initiatePaymentSession(
         console.log('✅ [Payment] Wompi configuration validated, publicKey:', publicKey.substring(0, 8) + '...');
 
         const reference = generateReference(propertyId);
-        const amountStr = String(AMOUNT_IN_CENTS);
+
+        // CRITICAL: Wompi requires amount as a clean integer string (no decimals)
+        const amountInCentsInt = Math.round(Number(AMOUNT_IN_CENTS));
+        const amountStr = amountInCentsInt.toString();
 
         // SHA-256 Signature: reference + amountInCents + currency + integritySecret
-        const signatureChain = reference + amountStr + CURRENCY + integritySecret;
+        const signatureChain = `${reference}${amountInCentsInt}${CURRENCY}${integritySecret}`;
+        console.log('🔍 [Payment Debug] Pre-Hash String:', signatureChain);
+        console.log('🔍 [Payment Debug] Amount as integer:', amountInCentsInt, 'type:', typeof amountInCentsInt);
+
         const signature = createHash('sha256').update(signatureChain).digest('hex');
         console.log('🔐 [Payment] Integrity signature generated for reference:', reference);
+        console.log('🔐 [Payment] Signature hash:', signature);
 
         // 4. Guardar Pago en BD
         const { error: insertError } = await supabase
@@ -82,7 +89,7 @@ export async function initiatePaymentSession(
                 usuario_id: userId,  // FK to usuarios table
                 inmueble_id: propertyId,
                 referencia_pedido: reference,
-                monto: AMOUNT_IN_CENTS / 100,
+                monto: amountInCentsInt / 100,  // Convert cents to currency units
                 estado: 'pendiente',
                 metodo_pago: 'wompi_redirect',
                 datos_transaccion: {
