@@ -25,6 +25,10 @@ export async function initiatePaymentSession(
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
+    // DEBUG: Log key status (NOT the key itself)
+    console.log('🔑 [Payment] SUPABASE_SERVICE_ROLE_KEY defined:', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
+    console.log('🔑 [Payment] Using service role key:', !!process.env.SUPABASE_SERVICE_ROLE_KEY ? 'SERVICE_ROLE' : 'ANON_KEY');
+
     if (!supabaseUrl || !supabaseServiceKey) {
         return { success: false, error: 'Error de configuración del servidor' };
     }
@@ -75,13 +79,13 @@ export async function initiatePaymentSession(
         const { error: insertError } = await supabase
             .from('pagos')
             .insert({
+                usuario_id: userId,  // FK to usuarios table
                 inmueble_id: propertyId,
                 referencia_pedido: reference,
                 monto: AMOUNT_IN_CENTS / 100,
                 estado: 'pendiente',
                 metodo_pago: 'wompi_redirect',
                 datos_transaccion: {
-                    user_id: userId,
                     user_email: userEmail,
                     signature: signature
                 }
@@ -89,7 +93,8 @@ export async function initiatePaymentSession(
 
         if (insertError) {
             console.error('❌ Error insertando pago:', insertError);
-            return { success: false, error: 'Error interno al registrar el pago.' };
+            console.error('❌ [Payment] Insert error details:', JSON.stringify(insertError, null, 2));
+            return { success: false, error: `DB Error: ${insertError.message}` };
         }
 
         // 5. Construir URL
