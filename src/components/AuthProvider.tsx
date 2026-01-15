@@ -134,29 +134,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Cleanup and redirect handled by onAuthStateChange SIGNED_OUT event
     };
 
-    // Initialize auth state
+    // Initialize auth state with timeout protection
     useEffect(() => {
+        const isMountedRef = { current: true }; // Track mount status for safe state updates
+
         const initAuth = async () => {
             try {
-                // Get current session
-                const { data: { session: currentSession } } = await supabase.auth.getSession();
+                console.log('🔐 [AuthProvider] Initializing auth with timeout...');
+
+                // Race: Real Auth Check vs 3-second Timer
+                const { data: { session: currentSession } } = await Promise.race([
+                    supabase.auth.getSession(),
+                    new Promise<never>((_, reject) =>
+                        setTimeout(() => reject(new Error('Auth initialization timeout')), 3000)
+                    )
+                ]);
+
+                if (!isMountedRef.current) return; // Guard after async
 
                 if (currentSession?.user) {
+                    console.log('✅ [AuthProvider] Session found:', currentSession.user.email);
                     setSession(currentSession);
                     setUser(currentSession.user);
 
-                    // Fetch role AND type from database
-                    const { role, type } = await fetchUserProfile(currentSession.user.id);
-                    setUserRole(role);
-                    setUserType(type);
+                    // Fetch role AND type from database (also with timeout)
+                    try {
+                        const { role, type } = await Promise.race([
+                            fetchUserProfile(currentSession.user.id),
+                            new Promise<{ role: UserRole; type: UserType }>((_, reject) =>
+                                setTimeout(() => reject(new Error('Profile fetch timeout')), 2000)
+                            )
+                        ]);
+                        if (isMountedRef.current) {
+                            setUserRole(role);
+                            setUserType(type);
+                        }
+                    } catch (profileError) {
+                        console.warn('⚠️ [AuthProvider] Profile fetch timed out, continuing without profile');
+                        // Continue without profile - user is still authenticated
+                    }
+                } else {
+                    console.log('ℹ️ [AuthProvider] No active session');
                 }
-
-                setLoading(false);
-                setAuthChecked(true);
-            } catch (err) {
-                console.error('Auth init error:', err);
-                setLoading(false);
-                setAuthChecked(true);
+            } catch (err: any) {
+                // Timeout or network error - proceed as if no session
+                console.warn('⚠️ [AuthProvider] Auth init timed out or failed:', err.message);
+                // Don't set session/user - treat as unauthenticated
+            } finally {
+                // GUARANTEED UI UNLOCK - Always set loading to false
+                if (isMountedRef.current) {
+                    setLoading(false);
+                    setAuthChecked(true);
+                    console.log('🏁 [AuthProvider] Auth check complete, UI unlocked');
+                }
             }
         };
 
@@ -166,6 +196,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             async (event, newSession) => {
                 console.log('📡 onAuthStateChange:', event, newSession?.user?.email);
+
+                if (!isMountedRef.current) return; // Guard for unmounted component
 
                 // Handle SIGNED_OUT event - cleanup and redirect
                 if (event === 'SIGNED_OUT') {
@@ -195,6 +227,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                         .eq('id', newSession.user.id)
                         .maybeSingle();
 
+                    if (!isMountedRef.current) return; // Guard after async
+
                     console.log('📊 AuthProvider: User profile:', profile);
 
                     // If user exists but nombre is missing (OAuth issue), sync it
@@ -208,8 +242,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                         }).eq('id', newSession.user.id);
                     }
 
-                    setUserRole(profile?.rol as UserRole ?? null);
-                    setUserType(profile?.tipo_usuario as UserType ?? null);
+                    if (isMountedRef.current) {
+                        setUserRole(profile?.rol as UserRole ?? null);
+                        setUserType(profile?.tipo_usuario as UserType ?? null);
+                    }
                 } else {
                     // No session (but not SIGNED_OUT event) - clear state
                     setSession(null);
@@ -220,7 +256,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
         );
 
+        // Cleanup on unmount
         return () => {
+            isMountedRef.current = false;
             subscription.unsubscribe();
         };
     }, []);
