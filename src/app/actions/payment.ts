@@ -54,7 +54,7 @@ export async function initiatePaymentSession(
         // 3. Generar Firma Wompi
         // Priority: Secure server-side env var → Legacy public env var → Error
         const integritySecret = process.env.WOMPI_INTEGRITY_SECRET || process.env.NEXT_PUBLIC_WOMPI_INTEGRITY_SECRET;
-        const publicKey = process.env.NEXT_PUBLIC_WOMPI_PUBLIC_KEY;
+        const publicKey = process.env.NEXT_PUBLIC_WOMPI_PUBLIC_KEY || process.env.WOMPI_PUBLIC_KEY;
 
         // Validate required Wompi configuration
         if (!integritySecret) {
@@ -62,10 +62,10 @@ export async function initiatePaymentSession(
             throw new Error('Configuration Error: WOMPI_INTEGRITY_SECRET is missing');
         }
         if (!publicKey) {
-            console.error('❌ [Payment] Configuration Error: NEXT_PUBLIC_WOMPI_PUBLIC_KEY is missing');
-            throw new Error('Configuration Error: NEXT_PUBLIC_WOMPI_PUBLIC_KEY is missing');
+            console.error('❌ [Payment] Configuration Error: Public Key is undefined');
+            throw new Error('SERVER ERROR: Public Key is undefined. Check Vercel Env Vars.');
         }
-        console.log('✅ [Payment] Wompi configuration validated');
+        console.log('✅ [Payment] Wompi configuration validated, publicKey:', publicKey.substring(0, 8) + '...');
 
         const reference = generateReference(propertyId);
         const amountStr = String(AMOUNT_IN_CENTS);
@@ -105,6 +105,8 @@ export async function initiatePaymentSession(
         checkoutUrl.searchParams.set('reference', reference);
         checkoutUrl.searchParams.set('signature:integrity', signature);
         if (redirectUrl) checkoutUrl.searchParams.set('redirect-url', redirectUrl);
+
+        console.log('🔗 [Payment] Generated Wompi URL:', checkoutUrl.toString());
 
         return {
             success: true,
