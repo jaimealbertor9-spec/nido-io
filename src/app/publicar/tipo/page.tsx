@@ -77,11 +77,26 @@ export default function TipoInmueblePage() {
 
         try {
             // ═══════════════════════════════════════════════════════════════
-            // STEP 1: Check authentication status
+            // STEP 1: Check authentication status (with timeout protection)
             // ═══════════════════════════════════════════════════════════════
-            console.log('🔍 [Tipo] Checking authentication...');
+            console.log('🔍 [Tipo] Checking authentication with timeout...');
 
-            const { data: { session } } = await supabase.auth.getSession();
+            let session = null;
+            try {
+                // Race: Real Auth Check vs 3-second Timer
+                const authResult = await Promise.race([
+                    supabase.auth.getSession(),
+                    new Promise<never>((_, reject) =>
+                        setTimeout(() => reject(new Error('Auth timeout')), 3000)
+                    )
+                ]);
+                session = authResult.data?.session;
+                console.log('✅ [Tipo] Auth check completed');
+            } catch (authError: any) {
+                console.warn('⚠️ [Tipo] Auth check timed out or failed:', authError.message);
+                // Treat as unauthenticated - will redirect to auth page
+                session = null;
+            }
 
             // ═══════════════════════════════════════════════════════════════
             // GUEST USER: Redirect to auth page with type parameter
