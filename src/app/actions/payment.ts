@@ -37,24 +37,39 @@ export async function initiatePaymentSession(
         // Usamos <any> para que TypeScript no bloquee el build si espera 'status' en inglés
         const { data: userVerifications } = await supabase
             .from('user_verifications')
-            .select('estado, documento_url') 
-            .eq('user_id', userId) as { data: any[], error: any }; 
+            .select('estado, documento_url')
+            .eq('user_id', userId) as { data: any[], error: any };
 
         const isApproved = userVerifications?.some((v: any) => v.estado === 'aprobado');
         const hasDocuments = userVerifications?.some((v: any) => v.documento_url !== null && v.documento_url !== '');
 
         if (!isApproved && !hasDocuments) {
-             return { success: false, error: 'Debes subir tu documento de identidad antes de pagar.' };
+            return { success: false, error: 'Debes subir tu documento de identidad antes de pagar.' };
         }
 
         // 3. Generar Firma Wompi
-        const integritySecret = process.env.WOMPI_INTEGRITY_SECRET || 'test_integrity_MBRbt4yWMK00gTx1eDF3bu1KO3nZS8Wm';
-        const publicKey = process.env.NEXT_PUBLIC_WOMPI_PUBLIC_KEY || 'pub_test_lhJMu7yJM1goapO7gmaIP97Vw0XwMT4Y';
-        
+        // Priority: Secure server-side env var → Legacy public env var → Error
+        const integritySecret = process.env.WOMPI_INTEGRITY_SECRET || process.env.NEXT_PUBLIC_WOMPI_INTEGRITY_SECRET;
+        const publicKey = process.env.NEXT_PUBLIC_WOMPI_PUBLIC_KEY;
+
+        // Validate required Wompi configuration
+        if (!integritySecret) {
+            console.error('❌ [Payment] Configuration Error: WOMPI_INTEGRITY_SECRET is missing');
+            throw new Error('Configuration Error: WOMPI_INTEGRITY_SECRET is missing');
+        }
+        if (!publicKey) {
+            console.error('❌ [Payment] Configuration Error: NEXT_PUBLIC_WOMPI_PUBLIC_KEY is missing');
+            throw new Error('Configuration Error: NEXT_PUBLIC_WOMPI_PUBLIC_KEY is missing');
+        }
+        console.log('✅ [Payment] Wompi configuration validated');
+
         const reference = generateReference(propertyId);
         const amountStr = String(AMOUNT_IN_CENTS);
+
+        // SHA-256 Signature: reference + amountInCents + currency + integritySecret
         const signatureChain = reference + amountStr + CURRENCY + integritySecret;
         const signature = createHash('sha256').update(signatureChain).digest('hex');
+        console.log('🔐 [Payment] Integrity signature generated for reference:', reference);
 
         // 4. Guardar Pago en BD
         const { error: insertError } = await supabase
@@ -65,7 +80,7 @@ export async function initiatePaymentSession(
                 monto: AMOUNT_IN_CENTS / 100,
                 estado: 'pendiente',
                 metodo_pago: 'wompi_redirect',
-                datos_transaccion: { 
+                datos_transaccion: {
                     user_id: userId,
                     user_email: userEmail,
                     signature: signature
