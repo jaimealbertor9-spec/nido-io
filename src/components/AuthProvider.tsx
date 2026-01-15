@@ -51,7 +51,7 @@ const PROTECTED_ROUTES = [
 ];
 
 // Routes that don't require business type selection (onboarding flow)
-const NO_TYPE_REQUIRED = [...PUBLIC_ROUTES, '/seleccion-rol', '/dashboard'];
+const NO_TYPE_REQUIRED = [...PUBLIC_ROUTES, '/dashboard'];
 
 export function AuthProvider({ children }: { children: ReactNode }) {
     const [session, setSession] = useState<Session | null>(null);
@@ -280,13 +280,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Only redirect from root path on initial load
         if (pathname === '/') {
             if (user) {
-                // Logged in user - check business type
-                if (userType === null) {
-                    router.push('/seleccion-rol');
-                } else {
-                    // Both propietario and inquilino go to /inicio
-                    router.push('/inicio');
-                }
+                // Logged in user goes directly to dashboard
+                router.push('/inicio');
             } else {
                 // Not logged in - go to welcome
                 router.push('/bienvenidos');
@@ -315,11 +310,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             return;
         }
 
-        // If logged in but no business type AND not on allowed routes -> redirect to type selection
-        if (user && userType === null && !NO_TYPE_REQUIRED.some(route => pathname === route || pathname.startsWith(route + '/')) && isProtectedRoute) {
-            console.log('🛡️ Route Protection: User has no business type, redirecting to selection...');
-            router.push('/seleccion-rol');
-        }
+        // NOTE: Business type selection is no longer mandatory - users can access dashboard directly
     }, [user, userType, loading, showSplash, pathname, router]);
 
     // Show splash screen
