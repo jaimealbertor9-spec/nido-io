@@ -3,9 +3,9 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { verifyPaymentByReference, VerifyPaymentResult } from '@/app/actions/verifyPayment';
+// IMPORTANTE: Cambiamos la función importada
+import { verifyWompiTransaction, VerifyPaymentResult } from '@/app/actions/verifyPayment';
 
-// Componente de carga para Suspense
 function LoadingState() {
     return (
         <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -18,23 +18,23 @@ function LoadingState() {
     );
 }
 
-// Contenido principal
 function ExitoContent() {
     const searchParams = useSearchParams();
-    const router = useRouter();
-    const reference = searchParams.get('id'); // Wompi envía ?id=REFERENCE
+    const transactionId = searchParams.get('id'); // Wompi envía el ID de transacción aquí
 
     const [status, setStatus] = useState<VerifyPaymentResult | null>(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        if (!reference) {
+        if (!transactionId) {
             setLoading(false);
             return;
         }
 
-        verifyPaymentByReference(reference)
+        // USAMOS LA FUNCIÓN CORRECTA PARA ID DE TRANSACCIÓN
+        verifyWompiTransaction(transactionId)
             .then((result) => {
+                console.log('Verification result:', result);
                 setStatus(result);
             })
             .catch((err) => {
@@ -43,7 +43,7 @@ function ExitoContent() {
             .finally(() => {
                 setLoading(false);
             });
-    }, [reference]);
+    }, [transactionId]);
 
     if (loading) return <LoadingState />;
 
@@ -53,7 +53,6 @@ function ExitoContent() {
             <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
                 <div className="max-w-md w-full bg-white rounded-3xl shadow-xl overflow-hidden text-center p-8">
 
-                    {/* Icono Animado */}
                     <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -64,10 +63,9 @@ function ExitoContent() {
                         ¡Pago Exitoso!
                     </h1>
                     <p className="text-gray-600 mb-8">
-                        Tu inmueble ha pasado a estado <strong>En Revisión</strong>. Recibirás una notificación cuando sea publicado oficialmente.
+                        Tu inmueble ha pasado a estado <strong>En Revisión</strong>. Recibirás una notificación cuando sea publicado.
                     </p>
 
-                    {/* BOTONES DE ACCIÓN */}
                     <div className="space-y-3">
                         <Link
                             href="/mis-inmuebles"
@@ -89,7 +87,7 @@ function ExitoContent() {
         );
     }
 
-    // Caso: Fallido o Error
+    // Caso: Fallido
     return (
         <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
             <div className="max-w-md w-full bg-white rounded-3xl shadow-xl p-8 text-center">
@@ -100,10 +98,10 @@ function ExitoContent() {
                 </div>
                 <h2 className="text-2xl font-bold text-gray-900 mb-2">Hubo un problema</h2>
                 <p className="text-gray-600 mb-6">
-                    No pudimos verificar el pago automáticamente o fue rechazado.
+                    {status?.error || 'No pudimos verificar el pago automáticamente.'}
                 </p>
                 <p className="text-sm text-gray-400 mb-6 font-mono bg-gray-100 p-2 rounded">
-                    Ref: {reference || 'Sin referencia'}
+                    Ref: {transactionId || '---'}
                 </p>
                 <Link
                     href="/mis-inmuebles"
@@ -116,7 +114,6 @@ function ExitoContent() {
     );
 }
 
-// Wrapper principal
 export default function Page() {
     return (
         <Suspense fallback={<LoadingState />}>
