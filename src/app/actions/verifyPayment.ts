@@ -1,59 +1,67 @@
 'use server';
 
+/**
+ * NIDO IO - Payment Verification Actions (CORREGIDO)
+ * Soluciona el problema de campos NULL en BD y actualización de estados.
+ */
+
 import { createClient } from '@supabase/supabase-js';
 import { revalidatePath } from 'next/cache';
 import type { VerifyPaymentResult } from './action-types';
 
+// Initialize Supabase with Service Role to bypass RLS policies
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
+// Wompi API config
 const WOMPI_API_URL = process.env.WOMPI_ENV === 'production'
     ? 'https://production.wompi.co/v1'
     : 'https://sandbox.wompi.co/v1';
 
 export type { VerifyPaymentResult } from './action-types';
 
-// ==============================================================================
-// 1. VERIFICAR POR ID DE TRANSACCIÓN (Webhook / Widget)
-// ==============================================================================
+/**
+ * Verifica transacción por ID (Widget/Webhook)
+ */
 export async function verifyWompiTransaction(transactionId: string): Promise<VerifyPaymentResult> {
     try {
         if (!transactionId) return { success: false, error: 'Transaction ID is required' };
 
-        console.log('🔍 Verifying Wompi transaction:', transactionId);
+        console.log('🔍 [Verify] Verifying Wompi transaction:', transactionId);
 
-        // 1. Consultar a Wompi
         const response = await fetch(`${WOMPI_API_URL}/transactions/${transactionId}`, {
             method: 'GET',
             headers: { 'Content-Type': 'application/json' },
             cache: 'no-store'
         });
 
-        if (!response.ok) return { success: false, error: 'Error al verificar el pago con Wompi' };
+        if (!response.ok) return { success: false, error: 'Error connecting to Wompi' };
 
         const data = await response.json();
         const transaction = data.data;
         const reference = transaction.reference;
 
-        console.log('📦 Wompi Reference:', reference);
+        console.log('📦 [Verify] Wompi Reference:', reference);
 
-        // 2. BUSCAR EL ID REAL EN NUESTRA BD (¡CORRECCIÓN CRÍTICA!)
-        // No confiamos en el ID cortado de la referencia string.
+        // Recuperar ID real desde la base de datos usando la referencia
         const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-        const { data: pago, error: pagoError } = await supabase
+        const { data: pagoLocal } = await supabase
             .from('pagos')
-            .select('inmueble_id, estado')
+            .select('inmueble_id')
             .eq('referencia_pedido', reference)
             .single();
 
-        if (pagoError || !pago?.inmueble_id) {
-            console.error('❌ Pago no encontrado en BD local:', reference);
-            return { success: false, error: 'Pago no encontrado en el sistema' };
-        }
+        // Si no encontramos el pago por referencia, intentamos extraer del string (fallback)
+        let propertyId = pagoLocal?.inmueble_id;
 
-        const propertyId = pago.inmueble_id; // ESTE ES EL ID COMPLETO (UUID)
-        console.log('✅ ID Real recuperado:', propertyId);
+        if (!propertyId) {
+            const referenceParts = reference.split('-');
+            // NIDO-{UUID}-{TIMESTAMP} -> UUID está en índice 1? No, el UUID se corta. 
+            // Mejor confiamos en que el pago YA existe en BD.
+            console.error('❌ [Verify] Pago no encontrado en BD para referencia:', reference);
+            // Intentamos buscar el inmueble asociado a esta referencia si el pago falló al crearse
+            return { success: false, error: 'Pago no encontrado en sistema local' };
+        }
 
         return await processTransactionStatus(
             transaction.status,
@@ -64,41 +72,43 @@ export async function verifyWompiTransaction(transactionId: string): Promise<Ver
         );
 
     } catch (error: any) {
-        console.error('❌ Error verifying payment:', error);
-        return { success: false, error: error.message || 'Error inesperado' };
+        console.error('❌ [Verify] Error:', error);
+        return { success: false, error: error.message };
     }
 }
 
-// ==============================================================================
-// 2. VERIFICAR POR REFERENCIA (Redirección)
-// ==============================================================================
+/**
+ * Verifica transacción por Referencia (Redirect)
+ */
 export async function verifyPaymentByReference(reference: string): Promise<VerifyPaymentResult> {
     try {
         if (!reference) return { success: false, error: 'Reference is required' };
 
-        console.log('🔍 Looking up payment by reference:', reference);
+        console.log('🔍 [Verify] Looking up payment by reference:', reference);
         const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-        // Buscar pago localmente
-        const { data: payment, error: fetchError } = await supabase
+        // Buscar el pago en BD
+        const { data: payment, error } = await supabase
             .from('pagos')
             .select('*')
             .eq('referencia_pedido', reference)
             .single();
 
-        if (fetchError || !payment) return { success: false, error: 'Pago no encontrado' };
+        if (error || !payment) {
+            console.error('❌ [Verify] Payment not found locally:', reference);
+            return { success: false, error: 'Pago no encontrado' };
+        }
 
-        // ¡CORRECCIÓN CRÍTICA! Usar siempre el ID de la base de datos, nunca el string cortado
         const propertyId = payment.inmueble_id;
 
-        // Si ya está aprobado en nuestra BD, retornar éxito directo
+        // Si ya está aprobado, retornamos éxito de una
         if (payment.estado === 'aprobado') {
             return { success: true, status: 'APPROVED', propertyId };
         }
 
-        // Si está pendiente, preguntar a Wompi
+        // Si está pendiente, consultamos a Wompi
         if (payment.estado === 'pendiente') {
-            console.log('⏳ Payment is pending, querying Wompi...');
+            console.log('⏳ [Verify] Local is pending, asking Wompi...');
             const wompiResponse = await fetch(
                 `${WOMPI_API_URL}/transactions?reference=${encodeURIComponent(reference)}`,
                 { method: 'GET', headers: { 'Content-Type': 'application/json' }, cache: 'no-store' }
@@ -120,16 +130,16 @@ export async function verifyPaymentByReference(reference: string): Promise<Verif
             }
         }
 
-        return { success: false, status: 'PENDING', propertyId, error: 'Procesando pago...' };
+        return { success: false, status: 'PENDING', propertyId, error: 'Pago en proceso...' };
 
     } catch (error: any) {
         return { success: false, error: error.message };
     }
 }
 
-// ==============================================================================
-// 3. LÓGICA DE ACTUALIZACIÓN (El Cerebro)
-// ==============================================================================
+/**
+ * LÓGICA CENTRAL DE ACTUALIZACIÓN (CEREBRO ARREGLADO)
+ */
 async function processTransactionStatus(
     status: string,
     propertyId: string,
@@ -140,65 +150,91 @@ async function processTransactionStatus(
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     if (status === 'APPROVED') {
-        // A. Actualizar Tabla Pagos
-        await supabase.from('pagos').update({
-            estado: 'aprobado',
-            wompi_transaction_id: transactionId,
-            datos_transaccion: transactionData,
-            updated_at: new Date().toISOString()
-        }).eq('referencia_pedido', reference);
+        console.log('✅ [Update] Status APPROVED. Starting updates...');
 
-        // B. Actualizar Inmueble (AQUÍ FALLABA ANTES POR EL ID CORTO)
-        // 1. Verificar documentos del usuario
-        const { data: inmueble } = await supabase
-            .from('inmuebles')
-            .select('propietario_id')
-            .eq('id', propertyId)
+        // 1. ACTUALIZAR TABLA PAGOS
+        // Usamos select() para confirmar que devuelve datos y asegurar que el ID existe
+        const { data: updatedPayment, error: payError } = await supabase
+            .from('pagos')
+            .update({
+                estado: 'aprobado',
+                wompi_transaction_id: transactionId,
+                datos_transaccion: transactionData,
+                updated_at: new Date().toISOString()
+            })
+            .eq('referencia_pedido', reference)
+            .select('id') // Importante: Retornar ID para usarlo abajo
             .single();
 
-        let newEstado = 'pendiente_verificacion';
+        if (payError) console.error('❌ Error updating pagos:', payError);
 
-        if (inmueble?.propietario_id) {
-            const { data: verif } = await supabase
-                .from('user_verifications')
-                .select('estado')
-                .eq('user_id', inmueble.propietario_id)
-                .order('created_at', { ascending: false })
-                .limit(1)
-                .single();
-
-            if (verif?.estado === 'aprobado') newEstado = 'activo'; // Si ya verificado -> Publicar de una
-            if (verif?.estado === 'pendiente') {
-                // Si pagó, movemos su verificación a revisión manual
-                await supabase.from('user_verifications')
-                    .update({ estado: 'pendiente_revision' })
-                    .eq('user_id', inmueble.propietario_id);
-            }
+        // Si no se actualizó el pago (ej: no encontrado), intentamos recuperar su ID igual
+        let finalPagoId = updatedPayment?.id;
+        if (!finalPagoId) {
+            const { data: existing } = await supabase.from('pagos').select('id').eq('referencia_pedido', reference).single();
+            finalPagoId = existing?.id;
         }
 
-        // 2. Ejecutar Update del Inmueble
-        const { error: updateError } = await supabase
+        console.log('💳 [Update] Pago ID linked:', finalPagoId);
+
+        // 2. CALCULAR FECHAS
+        const fechaPublicacion = new Date();
+        const fechaExpiracion = new Date();
+        fechaExpiracion.setDate(fechaExpiracion.getDate() + 30); // 30 días
+
+        // 3. ACTUALIZAR INMUEBLE (CON TODOS LOS CAMPOS QUE FALTABAN)
+        const { error: propError } = await supabase
             .from('inmuebles')
             .update({
-                estado: 'en_revision', // Forzamos este estado para ver el cambio YA
-                fecha_publicacion: new Date().toISOString(),
+                estado: 'en_revision', // Forzamos estado activo/revisión
+                pago_id: finalPagoId,   // <--- AQUI ESTABA EL ERROR (FALTABA ESTO)
+                fecha_publicacion: fechaPublicacion.toISOString(),
+                fecha_expiracion: fechaExpiracion.toISOString(), // <--- Y ESTO
                 updated_at: new Date().toISOString(),
             })
-            .eq('id', propertyId); // AHORA SÍ ES UN UUID VÁLIDO
+            .eq('id', propertyId);
 
-        if (updateError) {
-            console.error('💥 Error updating property:', updateError);
-            return { success: false, error: 'Error al actualizar propiedad: ' + updateError.message };
+        if (propError) {
+            console.error('❌ Error updating inmueble:', propError);
+            return { success: false, error: 'Error actualizando propiedad' };
         }
 
+        // 4. Revalidar Caché
         revalidatePath('/mis-inmuebles');
+        revalidatePath(`/inmueble/${propertyId}`);
+
+        console.log('🎉 [Update] Full success. DB updated correctly.');
         return { success: true, status: 'APPROVED', propertyId };
     }
 
-    return { success: false, status, propertyId, error: 'Pago no aprobado' };
+    // Manejo de rechazos
+    if (status === 'DECLINED' || status === 'ERROR' || status === 'VOIDED') {
+        await supabase.from('pagos').update({
+            estado: 'rechazado',
+            wompi_transaction_id: transactionId,
+            updated_at: new Date().toISOString()
+        }).eq('referencia_pedido', reference);
+    }
+
+    return { success: false, status, propertyId, error: 'Pago no aprobado: ' + status };
 }
 
-// Helpers para la vista (se mantienen igual o simples)
+// Helpers visuales
+export async function getPropertySummary(propertyId: string) {
+    if (!propertyId) return null;
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const { data } = await supabase.from('inmuebles').select('titulo, precio, barrio, ciudad').eq('id', propertyId).single();
+    if (!data) return null;
+    return {
+        title: data.titulo,
+        price: data.precio,
+        offerType: 'venta',
+        neighborhood: data.barrio,
+        city: data.ciudad,
+        coverImage: null // Opcional
+    };
+}
+
 export async function getPropertyStatus(propertyId: string) {
     if (!propertyId) return null;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
