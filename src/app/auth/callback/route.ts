@@ -101,8 +101,8 @@ export async function GET(request: NextRequest) {
                 redirectPath = '/dashboard';
                 console.log('🏠 Propietario user - redirecting to dashboard');
             } else if (tipoUsuario === 'inquilino') {
-                redirectPath = '/inicio';
-                console.log('🔍 Inquilino user - redirecting to inicio');
+                redirectPath = '/publicar/tipo';
+                console.log('🔍 Inquilino user - redirecting to publicar');
             } else {
                 // User has security role but no business type
                 redirectPath = '/seleccion-rol';

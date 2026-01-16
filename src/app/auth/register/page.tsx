@@ -93,8 +93,8 @@ export default function RegisterPage() {
 
             // No type param - use intent-based redirect
             if (intent) {
-                // User had explicit intent - send them to appropriate dashboard
-                const redirectPath = intent === 'propietario' ? '/dashboard' : '/inicio';
+                // User had explicit intent - send them to appropriate page
+                const redirectPath = intent === 'propietario' ? '/publicar/tipo' : '/publicar/tipo';
                 console.log(`🔄 Redirigiendo a ${redirectPath} (intent: ${intent})`);
                 router.push(redirectPath);
             } else {

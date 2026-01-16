@@ -43,7 +43,6 @@ const PUBLIC_ROUTES = [
 
 // Routes that STRICTLY require authentication (protected)
 const PROTECTED_ROUTES = [
-    '/inicio',
     '/dashboard',           // User dashboard
     '/mis-inmuebles',
     '/perfil',
@@ -117,8 +116,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setUserType(type);
             setUserRole('usuario');
 
-            // Redirect to dashboard
-            router.push('/inicio');
+            // Redirect to publicar flow
+            router.push('/publicar/tipo');
 
             return true;
         } catch (err) {
@@ -280,8 +279,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Only redirect from root path on initial load
         if (pathname === '/') {
             if (user) {
-                // Logged in user goes directly to dashboard
-                router.push('/inicio');
+                // Logged in user goes directly to publicar flow
+                router.push('/publicar/tipo');
             } else {
                 // Not logged in - go to welcome
                 router.push('/bienvenidos');
