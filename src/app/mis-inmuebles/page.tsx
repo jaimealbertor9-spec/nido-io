@@ -1,12 +1,22 @@
-import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
+import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 
 export default async function MisInmueblesPage() {
     const cookieStore = cookies();
 
-    // @ts-ignore - Ignoramos chequeo estricto de cookies para evitar error de build en Vercel
-    const supabase = createServerComponentClient({ cookies: () => cookieStore });
+    // CONEXIÓN MODERNA USANDO @supabase/ssr (Lo que ya tienes instalado)
+    const supabase = createServerClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        {
+            cookies: {
+                get(name: string) {
+                    return cookieStore.get(name)?.value;
+                },
+            },
+        }
+    );
 
     // 1. Verificar Sesión
     const {
@@ -17,7 +27,7 @@ export default async function MisInmueblesPage() {
         redirect('/bienvenidos');
     }
 
-    // 2. Obtener el Inmueble (Quitamos la variable 'error' que no se usaba)
+    // 2. Obtener el Inmueble del usuario
     const { data: inmuebles } = await supabase
         .from('inmuebles')
         .select('*')
@@ -38,9 +48,7 @@ export default async function MisInmueblesPage() {
 
     // CASO B: Está en Borrador -> Verificar qué le falta
     if (inmueble.estado === 'borrador') {
-        // Revisamos columnas críticas del PASO 1.
-        // OJO: Asegúrate que los nombres de columnas (barrio, area_construida) sean REALES en tu Supabase.
-        // Si no existen, TypeScript fallará. Si son opcionales, esto funciona.
+        // Validamos campos del Paso 1 para saber dónde enviarlo
         const paso1Completo =
             inmueble.barrio && inmueble.area_construida && inmueble.direccion;
 
@@ -51,7 +59,7 @@ export default async function MisInmueblesPage() {
         }
     }
 
-    // CASO C: En Revisión o Publicado -> Renderizamos Dashboard
+    // CASO C: En Revisión o Publicado -> SE QUEDA AQUÍ (Renderizamos Dashboard)
 
     // =====================================================================
     // 🎨 DISEÑO UI
