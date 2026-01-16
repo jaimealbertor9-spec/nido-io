@@ -1,85 +1,218 @@
 import { createHash } from 'crypto';
 import { createClient } from '@supabase/supabase-js';
 
-// Safe Runtime Handler
-export async function POST(request: Request): Promise<Response> {
-  console.log('[WOMPI WEBHOOK] Received event');
+// ═══════════════════════════════════════════════════════════════════════════════
+// WOMPI WEBHOOK HANDLER
+// Handles transaction.updated events from Wompi payment gateway
+// ═══════════════════════════════════════════════════════════════════════════════
 
-  // 🛡️ RUNTIME ENV LOADING (Lee variables solo al recibir la petición)
+export async function POST(request: Request): Promise<Response> {
+  console.log('═══════════════════════════════════════════════════════════════');
+  console.log('[WOMPI WEBHOOK] 📨 Received event at:', new Date().toISOString());
+
+  // 🛡️ RUNTIME ENV LOADING (Read variables only at request time)
   const WOMPI_EVENTS_SECRET = process.env.WOMPI_EVENTS_SECRET || '';
+  const WOMPI_INTEGRITY_SECRET = process.env.WOMPI_INTEGRITY_SECRET || '';
   const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
   const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
   try {
+    // Parse the webhook payload
     const evento = await request.json();
+    console.log('[WOMPI WEBHOOK] Event type:', evento.event);
+
+    // Validate event structure
+    if (!evento.data?.transaction) {
+      console.error('[WOMPI WEBHOOK] ❌ Invalid event structure - no transaction data');
+      return Response.json({ success: false, error: 'Invalid structure' }, { status: 400 });
+    }
+
     const { transaction } = evento.data;
+    const { id, reference, status, amount_in_cents } = transaction;
 
-    // 1. Validate Signature (Optional check)
-    if (WOMPI_EVENTS_SECRET) {
-      // Aquí iría la lógica de firma si la usas estricta
+    console.log('[WOMPI WEBHOOK] Transaction:', { id, reference, status, amount_in_cents });
+
+    // ─────────────────────────────────────────────────────────────────────
+    // STEP 1: VERIFY SIGNATURE (Using Events Secret or Integrity Secret)
+    // ─────────────────────────────────────────────────────────────────────
+    if (evento.signature?.checksum && (WOMPI_EVENTS_SECRET || WOMPI_INTEGRITY_SECRET)) {
+      const secret = WOMPI_EVENTS_SECRET || WOMPI_INTEGRITY_SECRET;
+      // Wompi checksum: SHA256(properties + timestamp + secret)
+      const properties = evento.signature.properties || [];
+      let signatureString = '';
+
+      // Build signature string from properties
+      for (const prop of properties) {
+        const value = prop.split('.').reduce((obj: any, key: string) => obj?.[key], evento.data);
+        signatureString += value;
+      }
+      signatureString += evento.timestamp + secret;
+
+      const calculatedChecksum = createHash('sha256').update(signatureString).digest('hex');
+
+      if (calculatedChecksum !== evento.signature.checksum) {
+        console.error('[WOMPI WEBHOOK] ❌ Invalid signature');
+        console.error('[WOMPI WEBHOOK] Expected:', evento.signature.checksum);
+        console.error('[WOMPI WEBHOOK] Calculated:', calculatedChecksum);
+        return Response.json({ success: false, error: 'Invalid signature' }, { status: 400 });
+      }
+      console.log('[WOMPI WEBHOOK] ✅ Signature verified');
+    } else {
+      console.log('[WOMPI WEBHOOK] ⚠️ Skipping signature verification (no secret configured)');
     }
 
-    // 2. Only process APPROVED
-    if (transaction.status !== 'APPROVED') {
-      return Response.json({ success: true, message: 'Not approved, skipped' });
+    // ─────────────────────────────────────────────────────────────────────
+    // STEP 2: ONLY PROCESS APPROVED TRANSACTIONS
+    // ─────────────────────────────────────────────────────────────────────
+    if (status !== 'APPROVED') {
+      console.log(`[WOMPI WEBHOOK] ℹ️ Transaction status is ${status}, not APPROVED. Acknowledging.`);
+      return Response.json({ success: true, message: `Status ${status} acknowledged, no action needed` });
     }
 
-    // 3. Connect DB (Si fallan las llaves, falla aquí, NO en el build)
+    // ─────────────────────────────────────────────────────────────────────
+    // STEP 3: CONNECT TO DATABASE
+    // ─────────────────────────────────────────────────────────────────────
     if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-      console.error('❌ Missing DB Config');
-      return Response.json({ success: false }, { status: 500 });
+      console.error('[WOMPI WEBHOOK] ❌ Missing database configuration');
+      // Return 200 to prevent Wompi retries, but log the error
+      return Response.json({ success: false, error: 'Server configuration error' });
     }
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, { auth: { persistSession: false } });
 
-    // 4. Process Payment
-    const referencia = transaction.reference;
-    // Extraer ID corto de NIDO-XXXXX-TIMESTAMP
-    const shortId = referencia.split('-')[1];
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
+      auth: { persistSession: false }
+    });
 
-    // Find Inmueble
-    const { data: inmueble } = await supabase
-      .from('inmuebles')
-      .select('id, propietario_id')
-      .ilike('id', `${shortId}%`)
+    // ─────────────────────────────────────────────────────────────────────
+    // STEP 4A: UPDATE PAYMENT RECORD (pagos table)
+    // ─────────────────────────────────────────────────────────────────────
+    console.log('[WOMPI WEBHOOK] 🔍 Looking for payment with reference:', reference);
+
+    const { data: pago, error: pagoError } = await supabase
+      .from('pagos')
+      .update({
+        estado: 'aprobado',
+        wompi_transaction_id: id,
+        respuesta_pasarela: evento,
+        updated_at: new Date().toISOString()
+      })
+      .eq('referencia_pedido', reference)
+      .select('id, inmueble_id, usuario_id')
       .single();
 
-    if (!inmueble) return Response.json({ success: false, message: 'Inmueble not found' }, { status: 404 });
+    if (pagoError || !pago) {
+      console.error('[WOMPI WEBHOOK] ❌ Payment not found or update failed:', pagoError);
+      // Try to insert if update failed (payment might not exist)
+      console.log('[WOMPI WEBHOOK] Attempting to find inmueble from reference...');
 
-    // Insert Payment
-    const { data: pago } = await supabase.from('pagos').insert({
-      referencia_pedido: referencia,
-      wompi_transaction_id: transaction.id,
-      monto: transaction.amount_in_cents / 100,
-      estado: 'aprobado',
-      inmueble_id: inmueble.id,
-      usuario_id: inmueble.propietario_id,
-      respuesta_pasarela: evento
-    }).select().single();
+      // Extract short ID from reference: NIDO-XXXXXXXX-TIMESTAMP
+      const parts = reference.split('-');
+      if (parts.length >= 2) {
+        const shortId = parts[1];
 
-    // Check User Verification
-    const { data: verif } = await supabase
-      .from('user_verifications')
-      .select('estado')
-      .eq('user_id', inmueble.propietario_id)
-      .single();
+        const { data: inmueble } = await supabase
+          .from('inmuebles')
+          .select('id, propietario_id')
+          .ilike('id', `${shortId}%`)
+          .single();
 
-    // Update Inmueble Status
-    const nuevoEstado = (verif?.estado === 'aprobado') ? 'publicado' : 'en_revision';
+        if (inmueble) {
+          // Insert new payment record
+          const { data: newPago, error: insertError } = await supabase
+            .from('pagos')
+            .insert({
+              referencia_pedido: reference,
+              wompi_transaction_id: id,
+              monto: amount_in_cents / 100,
+              estado: 'aprobado',
+              inmueble_id: inmueble.id,
+              usuario_id: inmueble.propietario_id,
+              metodo_pago: 'wompi_redirect',
+              respuesta_pasarela: evento
+            })
+            .select('id, inmueble_id')
+            .single();
 
-    await supabase.from('inmuebles').update({
-      estado: nuevoEstado,
-      pago_id: pago?.id,
-      fecha_publicacion: new Date().toISOString()
-    }).eq('id', inmueble.id);
+          if (insertError) {
+            console.error('[WOMPI WEBHOOK] ❌ Failed to insert payment:', insertError);
+            return Response.json({ success: false, error: 'Failed to record payment' });
+          }
 
-    return Response.json({ success: true, nuevoEstado });
+          // Continue with inmueble update using the new payment
+          await updateInmueble(supabase, inmueble.id, newPago?.id);
+          return Response.json({ success: true, message: 'Payment created and inmueble updated' });
+        }
+      }
+
+      return Response.json({ success: false, error: 'Payment reference not found' });
+    }
+
+    console.log('[WOMPI WEBHOOK] ✅ Payment updated:', pago.id);
+
+    // ─────────────────────────────────────────────────────────────────────
+    // STEP 4B: UPDATE INMUEBLE (Property table)
+    // ─────────────────────────────────────────────────────────────────────
+    if (pago.inmueble_id) {
+      await updateInmueble(supabase, pago.inmueble_id, pago.id);
+    } else {
+      console.log('[WOMPI WEBHOOK] ⚠️ No inmueble_id associated with payment');
+    }
+
+    console.log('[WOMPI WEBHOOK] ✅ Webhook processing complete');
+    console.log('═══════════════════════════════════════════════════════════════');
+
+    return Response.json({
+      success: true,
+      message: 'Payment approved and property updated',
+      pagoId: pago.id
+    });
 
   } catch (error: any) {
-    console.error('Webhook Error:', error);
-    return Response.json({ success: false, error: error.message }, { status: 500 });
+    console.error('[WOMPI WEBHOOK] 💥 Unexpected error:', error.message);
+    // Return 200 to prevent Wompi retries (we'll handle it manually if needed)
+    return Response.json({
+      success: false,
+      error: error.message,
+      note: 'Acknowledged to prevent retries'
+    });
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPER: Update Inmueble after successful payment
+// ─────────────────────────────────────────────────────────────────────────────
+async function updateInmueble(supabase: any, inmuebleId: string, pagoId: string | undefined) {
+  const now = new Date();
+  const expiration = new Date(now);
+  expiration.setDate(expiration.getDate() + 30); // 30 days from now
+
+  console.log('[WOMPI WEBHOOK] 📝 Updating inmueble:', inmuebleId);
+
+  const { error: inmuebleError } = await supabase
+    .from('inmuebles')
+    .update({
+      estado: 'en_revision',
+      pago_id: pagoId,
+      fecha_publicacion: now.toISOString(),
+      fecha_expiracion: expiration.toISOString(),
+      updated_at: now.toISOString()
+    })
+    .eq('id', inmuebleId);
+
+  if (inmuebleError) {
+    console.error('[WOMPI WEBHOOK] ❌ Failed to update inmueble:', inmuebleError);
+  } else {
+    console.log('[WOMPI WEBHOOK] ✅ Inmueble updated to en_revision with 30-day expiration');
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET: Health check endpoint
+// ─────────────────────────────────────────────────────────────────────────────
 export async function GET() {
-  return Response.json({ status: 'active', version: '3.1.0' });
+  return Response.json({
+    status: 'active',
+    version: '4.0.0',
+    timestamp: new Date().toISOString(),
+    description: 'Wompi Webhook Handler - Handles payment confirmations'
+  });
 }
