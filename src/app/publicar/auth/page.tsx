@@ -50,8 +50,9 @@ function AuthContent() {
                 const { data: { user } } = await supabase.auth.getUser();
                 if (user) {
                     setIsCreatingDraft(true);
-                    const redirectUrl = await handlePostLoginRedirect();
-                    router.push(redirectUrl);
+                    const destination = await handlePostLoginRedirect();
+                    router.push(destination);
+                    router.refresh(); // Ensure session cookies are re-evaluated
                 }
             } catch (err) {
                 console.error('Session check error:', err);
@@ -67,11 +68,13 @@ function AuthContent() {
                     // ABSOLUTE: Let server decide where to go
                     setIsCreatingDraft(true);
                     try {
-                        const redirectUrl = await handlePostLoginRedirect();
-                        router.push(redirectUrl);
+                        const destination = await handlePostLoginRedirect();
+                        router.push(destination);
+                        router.refresh(); // Ensure session cookies are re-evaluated
                     } catch (err) {
                         console.error('Smart redirect error:', err);
                         router.push('/mis-inmuebles');
+                        router.refresh();
                     }
                 }
             }
