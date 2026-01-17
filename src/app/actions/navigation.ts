@@ -192,3 +192,100 @@ export async function getUserDraftCount(): Promise<{ count: number; latestDraftI
         return { count: 0, latestDraftId: null };
     }
 }
+
+/**
+ * Post-Login Smart Router (HYBRID LOGIC)
+ * 
+ * Redirects users based on their property history:
+ * 1. Verify Session
+ * 2. CASE A: Has "live" properties (en_revision, publicado, etc.) -> Dashboard
+ * 3. CASE B: Has draft (borrador) -> Resume wizard at appropriate step
+ * 4. CASE C: New user -> Start fresh flow
+ */
+export async function handlePostLoginRedirect(): Promise<string> {
+    try {
+        const cookieStore = await cookies();
+
+        const supabase = createServerClient(
+            supabaseUrl,
+            supabaseAnonKey,
+            {
+                cookies: {
+                    get(name: string) {
+                        return cookieStore.get(name)?.value;
+                    },
+                    set(name: string, value: string, options: CookieOptions) {
+                        try {
+                            cookieStore.set({ name, value, ...options });
+                        } catch (error) {
+                            console.warn('Cookie set warning:', error);
+                        }
+                    },
+                    remove(name: string, options: CookieOptions) {
+                        try {
+                            cookieStore.set({ name, value: '', ...options });
+                        } catch (error) {
+                            console.warn('Cookie remove warning:', error);
+                        }
+                    },
+                },
+            }
+        );
+
+        // 1. Verify Session
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+        if (authError || !user) {
+            console.log('🔐 [PostLogin] No session, redirecting to auth');
+            return '/publicar/auth';
+        }
+
+        // 2. Check for "LIVE" properties first (priority: active users go to dashboard)
+        const liveStatuses = ['en_revision', 'publicado', 'pendiente_verificacion', 'rechazado', 'vendido', 'arrendado'];
+
+        const { data: liveProperties, error: liveError } = await supabase
+            .from('inmuebles')
+            .select('id')
+            .eq('propietario_id', user.id)
+            .in('estado', liveStatuses)
+            .limit(1);
+
+        if (!liveError && liveProperties && liveProperties.length > 0) {
+            console.log('📊 [PostLogin] User has live properties, going to dashboard');
+            return '/mis-inmuebles';
+        }
+
+        // 3. Check for DRAFTS (only if no live properties)
+        const { data: drafts, error: draftError } = await supabase
+            .from('inmuebles')
+            .select('id, barrio, direccion, area_m2')
+            .eq('propietario_id', user.id)
+            .eq('estado', 'borrador')
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+        if (!draftError && drafts && drafts.length > 0) {
+            const draft = drafts[0];
+
+            // Check if step 1 data exists (location filled) to send to step 2
+            const hasLocationData = draft.barrio && draft.direccion;
+            const hasAreaData = draft.area_m2 && draft.area_m2 > 0;
+
+            if (hasLocationData || hasAreaData) {
+                console.log('📝 [PostLogin] Resuming draft at paso-2:', draft.id);
+                return `/publicar/crear/${draft.id}/paso-2`;
+            } else {
+                console.log('📝 [PostLogin] Resuming draft at paso-1:', draft.id);
+                return `/publicar/crear/${draft.id}/paso-1`;
+            }
+        }
+
+        // 4. New User -> Start Flow
+        console.log('🆕 [PostLogin] New user, starting fresh');
+        return '/publicar/tipo';
+
+    } catch (error) {
+        console.error('❌ [PostLogin] Error:', error);
+        return '/publicar/tipo';
+    }
+}

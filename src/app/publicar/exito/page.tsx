@@ -73,13 +73,6 @@ function ExitoContent() {
                         >
                             Ver Mis Inmuebles
                         </Link>
-
-                        <Link
-                            href="/publicar/tipo"
-                            className="block w-full bg-white text-indigo-600 font-bold py-3.5 px-4 rounded-xl border-2 border-indigo-100 hover:bg-indigo-50 transition"
-                        >
-                            Publicar Otro Inmueble
-                        </Link>
                     </div>
 
                 </div>

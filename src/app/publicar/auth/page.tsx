@@ -7,6 +7,7 @@ import { Mail, Lock, Check, Eye, EyeOff, Loader2, X } from 'lucide-react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { createPropertyDraft } from '@/app/actions/publish';
+import { handlePostLoginRedirect } from '@/app/actions/navigation';
 
 const fredoka = Fredoka({
     subsets: ['latin'],
@@ -75,18 +76,31 @@ function AuthContent() {
 
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             async (event, session) => {
-                if (event === 'SIGNED_IN' && session?.user && propertyType && !draftCreationAttempted.current) {
-                    draftCreationAttempted.current = true;
-                    setIsCreatingDraft(true);
-                    setError(null);
+                if (event === 'SIGNED_IN' && session?.user) {
+                    // CASE 1: If propertyType is provided, create draft (existing flow)
+                    if (propertyType && !draftCreationAttempted.current) {
+                        draftCreationAttempted.current = true;
+                        setIsCreatingDraft(true);
+                        setError(null);
 
-                    try {
-                        const draftId = await createPropertyDraft(propertyType, session.user.id);
-                        router.push(`/publicar/crear/${draftId}/paso-1`);
-                    } catch (draftErr: any) {
-                        setError(draftErr.message || 'Error al crear el borrador');
-                        setIsCreatingDraft(false);
-                        draftCreationAttempted.current = false;
+                        try {
+                            const draftId = await createPropertyDraft(propertyType, session.user.id);
+                            router.push(`/publicar/crear/${draftId}/paso-1`);
+                        } catch (draftErr: any) {
+                            setError(draftErr.message || 'Error al crear el borrador');
+                            setIsCreatingDraft(false);
+                            draftCreationAttempted.current = false;
+                        }
+                    } else {
+                        // CASE 2: No propertyType - Use Smart Router to decide destination
+                        setIsCreatingDraft(true);
+                        try {
+                            const redirectUrl = await handlePostLoginRedirect();
+                            router.push(redirectUrl);
+                        } catch (err) {
+                            console.error('Smart redirect error:', err);
+                            router.push('/mis-inmuebles');
+                        }
                     }
                 }
             }
@@ -177,7 +191,7 @@ function AuthContent() {
                 }
 
                 // Insert user into database with tipo_usuario from intent param
-                if (data?.user) {
+                if (data?.user && data.user.email) {
                     await supabase
                         .from('usuarios')
                         .upsert({
@@ -185,8 +199,8 @@ function AuthContent() {
                             email: data.user.email,
                             nombre: email.split('@')[0],
                             rol: 'usuario',
-                            tipo_usuario: intent  // Use intent from URL param (propietario/inquilino)
-                        }, { onConflict: 'id' });
+                            tipo_usuario: intent as 'propietario' | 'inquilino' | 'ambos'
+                        } as any, { onConflict: 'id' });
 
                     console.log(`✅ Usuario insertado con tipo_usuario: ${intent} desde flujo publicar`);
                 }
