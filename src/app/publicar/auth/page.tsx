@@ -6,7 +6,7 @@ import { Fredoka } from 'next/font/google';
 import { Mail, Lock, Check, Eye, EyeOff, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
-import { handlePostLoginRedirect } from '@/app/actions/navigation';
+// REMOVED: Server Action - using client-side routing to fix cookie sync issue
 
 const fredoka = Fredoka({
     subsets: ['latin'],
@@ -41,18 +41,79 @@ function AuthContent() {
     const [isCreatingDraft, setIsCreatingDraft] = useState(false);
 
     // ============================================================
-    // SMART ROUTER - Server decides destination (LOBOTOMIZED)
+    // CLIENT-SIDE SMART ROUTER (Bypasses Server Action cookie issue)
     // ============================================================
     useEffect(() => {
+        // Helper: Client-side routing logic (runs entirely on client)
+        const performClientSideRouting = async (userId: string, userEmail: string) => {
+            console.log('✅ Client-side routing started for:', userEmail);
+            setIsCreatingDraft(true);
+
+            try {
+                // Step A: Attempt User Upsert (non-critical, ignore errors)
+                try {
+                    await supabase
+                        .from('usuarios')
+                        .upsert({
+                            id: userId,
+                            email: userEmail,
+                            nombre: userEmail?.split('@')[0] || 'Usuario',
+                        } as any, { onConflict: 'id' });
+                } catch (err) {
+                    console.warn('Upsert non-fatal error:', err);
+                }
+
+                // Step B: Check for LIVE Properties (Strict Priority)
+                const { data: liveProps } = await supabase
+                    .from('inmuebles')
+                    .select('id')
+                    .eq('propietario_id', userId)
+                    .in('estado', ['en_revision', 'publicado', 'pendiente_verificacion', 'rechazado'])
+                    .limit(1);
+
+                if (liveProps && liveProps.length > 0) {
+                    console.log('🚀 Found live property -> Dashboard');
+                    window.location.href = '/mis-inmuebles';
+                    return;
+                }
+
+                // Step C: Check for DRAFTS (Secondary Priority)
+                const { data: drafts } = await supabase
+                    .from('inmuebles')
+                    .select('id, barrio, direccion')
+                    .eq('propietario_id', userId)
+                    .eq('estado', 'borrador')
+                    .order('created_at', { ascending: false })
+                    .limit(1);
+
+                if (drafts && drafts.length > 0) {
+                    const draft = drafts[0];
+                    console.log('📝 Found draft -> Resuming:', draft.id);
+                    if (draft.barrio && draft.direccion) {
+                        window.location.href = `/publicar/crear/${draft.id}/paso-2`;
+                    } else {
+                        window.location.href = `/publicar/crear/${draft.id}/paso-1`;
+                    }
+                    return;
+                }
+
+                // Step D: Default (New User)
+                console.log('✨ No history -> New Wizard');
+                window.location.href = '/publicar/tipo';
+
+            } catch (error) {
+                console.error('Routing error:', error);
+                // Failsafe redirect
+                window.location.href = '/mis-inmuebles';
+            }
+        };
+
         // Check if user is already logged in on mount
         const checkExistingSession = async () => {
             try {
                 const { data: { user } } = await supabase.auth.getUser();
                 if (user) {
-                    setIsCreatingDraft(true);
-                    const destination = await handlePostLoginRedirect();
-                    router.push(destination);
-                    router.refresh(); // Ensure session cookies are re-evaluated
+                    await performClientSideRouting(user.id, user.email || '');
                 }
             } catch (err) {
                 console.error('Session check error:', err);
@@ -65,23 +126,13 @@ function AuthContent() {
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             async (event, session) => {
                 if (event === 'SIGNED_IN' && session?.user) {
-                    // ABSOLUTE: Let server decide where to go
-                    setIsCreatingDraft(true);
-                    try {
-                        const destination = await handlePostLoginRedirect();
-                        router.push(destination);
-                        router.refresh(); // Ensure session cookies are re-evaluated
-                    } catch (err) {
-                        console.error('Smart redirect error:', err);
-                        router.push('/mis-inmuebles');
-                        router.refresh();
-                    }
+                    await performClientSideRouting(session.user.id, session.user.email || '');
                 }
             }
         );
 
         return () => subscription.unsubscribe();
-    }, [router]);
+    }, []);
 
     // ============================================================
     // HANDLERS
@@ -199,10 +250,10 @@ function AuthContent() {
                 <div className="text-center">
                     <Loader2 className="w-10 h-10 text-blue-600 animate-spin mx-auto mb-4" />
                     <h2 className="text-xl font-semibold text-gray-900 mb-2">
-                        Creando tu borrador...
+                        Redirigiendo...
                     </h2>
                     <p className="text-gray-500">
-                        Preparando el formulario para tu {propertyLabel}
+                        Estamos preparando todo para ti
                     </p>
                 </div>
             </div>

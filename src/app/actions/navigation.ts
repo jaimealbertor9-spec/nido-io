@@ -206,13 +206,22 @@ export async function handlePostLoginRedirect(): Promise<string> {
     try {
         const cookieStore = await cookies();
 
+        // 🔍 DEBUG: Log all cookies to diagnose session sync issue
+        const allCookies = cookieStore.getAll();
+        console.log('🔍 [ServerAction] Checking auth for cookies:', allCookies.map(c => c.name));
+
         const supabase = createServerClient(
             supabaseUrl,
             supabaseAnonKey,
             {
                 cookies: {
                     get(name: string) {
-                        return cookieStore.get(name)?.value;
+                        const value = cookieStore.get(name)?.value;
+                        // Log Supabase auth cookie access
+                        if (name.includes('auth')) {
+                            console.log(`🍪 [Cookie GET] ${name}: ${value ? 'EXISTS' : 'MISSING'}`);
+                        }
+                        return value;
                     },
                     set(name: string, value: string, options: CookieOptions) {
                         try {
@@ -232,13 +241,15 @@ export async function handlePostLoginRedirect(): Promise<string> {
             }
         );
 
-        // 1. Verify Session
+        // 1. Verify User (using getUser, NOT getSession for security)
         const { data: { user }, error: authError } = await supabase.auth.getUser();
 
         if (authError || !user) {
-            console.log('🔐 [PostLogin] No session, redirecting to auth');
+            console.error('❌ [ServerAction] User verification failed:', authError?.message || 'No user returned');
             return '/publicar/auth';
         }
+
+        console.log('✅ [ServerAction] User verified:', user.email);
 
         // 2. Check for "LIVE" properties first (priority: active users go to dashboard)
         const liveStatuses = ['en_revision', 'publicado', 'pendiente_verificacion', 'rechazado', 'vendido', 'arrendado'];
