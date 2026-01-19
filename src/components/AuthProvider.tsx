@@ -141,27 +141,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             try {
                 console.log('🔐 [AuthProvider] Initializing auth with timeout...');
 
-                // Race: Real Auth Check vs 3-second Timer
-                const { data: { session: currentSession } } = await Promise.race([
-                    supabase.auth.getSession(),
-                    new Promise<never>((_, reject) =>
-                        setTimeout(() => reject(new Error('Auth initialization timeout')), 3000)
-                    )
-                ]);
+                // Use getUser() instead of getSession() - more reliable for SSR
+                // Increased timeout to 8 seconds to handle slow network
+                let currentUser = null;
+
+                try {
+                    const { data: { user: authUser } } = await Promise.race([
+                        supabase.auth.getUser(),
+                        new Promise<never>((_, reject) =>
+                            setTimeout(() => reject(new Error('Auth initialization timeout')), 8000)
+                        )
+                    ]);
+                    currentUser = authUser;
+                } catch (timeoutErr) {
+                    console.warn('⚠️ [AuthProvider] getUser timed out, trying getSession fallback...');
+                    // Fallback: Try getSession which might be cached
+                    try {
+                        const { data: { session: fallbackSession } } = await supabase.auth.getSession();
+                        currentUser = fallbackSession?.user || null;
+                        if (currentUser) {
+                            console.log('✅ [AuthProvider] Fallback session found');
+                            if (isMountedRef.current) {
+                                setSession(fallbackSession);
+                            }
+                        }
+                    } catch (fallbackErr) {
+                        console.warn('⚠️ [AuthProvider] Fallback also failed');
+                    }
+                }
 
                 if (!isMountedRef.current) return; // Guard after async
 
-                if (currentSession?.user) {
-                    console.log('✅ [AuthProvider] Session found:', currentSession.user.email);
-                    setSession(currentSession);
-                    setUser(currentSession.user);
+                if (currentUser) {
+                    console.log('✅ [AuthProvider] User found:', currentUser.email);
+                    setUser(currentUser);
 
                     // Fetch role AND type from database (also with timeout)
                     try {
                         const { role, type } = await Promise.race([
-                            fetchUserProfile(currentSession.user.id),
+                            fetchUserProfile(currentUser.id),
                             new Promise<{ role: UserRole; type: UserType }>((_, reject) =>
-                                setTimeout(() => reject(new Error('Profile fetch timeout')), 2000)
+                                setTimeout(() => reject(new Error('Profile fetch timeout')), 3000)
                             )
                         ]);
                         if (isMountedRef.current) {
@@ -173,12 +193,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                         // Continue without profile - user is still authenticated
                     }
                 } else {
-                    console.log('ℹ️ [AuthProvider] No active session');
+                    console.log('ℹ️ [AuthProvider] No active user session');
                 }
             } catch (err: any) {
-                // Timeout or network error - proceed as if no session
-                console.warn('⚠️ [AuthProvider] Auth init timed out or failed:', err.message);
-                // Don't set session/user - treat as unauthenticated
+                // Critical error - proceed as if no session
+                console.error('❌ [AuthProvider] Critical auth error:', err.message);
             } finally {
                 // GUARANTEED UI UNLOCK - Always set loading to false
                 if (isMountedRef.current) {
