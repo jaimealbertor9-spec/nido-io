@@ -1,35 +1,22 @@
 'use client';
 
 import { useState, useEffect, Suspense } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { Fredoka } from 'next/font/google';
 import { Mail, Lock, Check, Eye, EyeOff, Loader2 } from 'lucide-react';
-import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
-// REMOVED: Server Action - using client-side routing to fix cookie sync issue
 
 const fredoka = Fredoka({
     subsets: ['latin'],
     weight: ['300', '400', '500', '600', '700']
 });
 
-// Property type labels
-const propertyLabels: Record<string, string> = {
-    apartamento: 'Apartamento',
-    casa: 'Casa',
-    habitacion: 'Habitación',
-    local: 'Local',
-    lote: 'Lote',
-};
-
 function AuthContent() {
-    const router = useRouter();
     const searchParams = useSearchParams();
 
     // Capture URL parameters for context-aware registration
     const propertyType = searchParams.get('type') || '';
-    const intent = searchParams.get('intent') || 'propietario'; // Default to propietario for publish flow
-    const propertyLabel = propertyLabels[propertyType] || 'Inmueble';
+    const intent = searchParams.get('intent') || 'propietario';
 
     // Form state
     const [email, setEmail] = useState('');
@@ -38,114 +25,35 @@ function AuthContent() {
     const [isLogin, setIsLogin] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [isCreatingDraft, setIsCreatingDraft] = useState(false);
+    const [isRedirecting, setIsRedirecting] = useState(false);
 
     // ============================================================
-    // CLIENT-SIDE SMART ROUTER (Bypasses Server Action cookie issue)
+    // LOBOTOMIZED AUTH: Always redirect to /mis-inmuebles
     // ============================================================
     useEffect(() => {
-        // Helper: Client-side routing logic (runs entirely on client)
-        const performClientSideRouting = async (userId: string, userEmail: string) => {
-            console.log('✅ Client-side routing started for:', userEmail);
-            setIsCreatingDraft(true);
-
-            // Timeout wrapper to prevent indefinite hanging
-            const timeoutPromise = new Promise<never>((_, reject) => {
-                setTimeout(() => reject(new Error('Routing timeout after 10s')), 10000);
-            });
-
-            const routingLogic = async () => {
-                // Step A: Attempt User Upsert (non-critical, don't await long)
-                console.log('🔄 Step A: User upsert...');
-                try {
-                    const { error: upsertError } = await supabase
-                        .from('usuarios')
-                        .upsert({
-                            id: userId,
-                            email: userEmail,
-                            nombre: userEmail?.split('@')[0] || 'Usuario',
-                        } as any, { onConflict: 'id' });
-
-                    if (upsertError) {
-                        console.warn('⚠️ Upsert error (non-fatal):', upsertError.message);
-                    } else {
-                        console.log('✅ Step A complete');
-                    }
-                } catch (err) {
-                    console.warn('⚠️ Upsert exception (non-fatal):', err);
-                }
-
-                // ============================================================
-                // SIMPLIFIED ROUTING: Always go to /mis-inmuebles
-                // The dashboard now handles drafts, properties, and create button
-                // ============================================================
-
-                // Step A: Quick user upsert (non-blocking)
-                console.log('🔄 Step A: User upsert...');
-                try {
-                    await supabase
-                        .from('usuarios')
-                        .upsert({
-                            id: userId,
-                            email: userEmail,
-                            nombre: userEmail?.split('@')[0] || 'Usuario',
-                        } as any, { onConflict: 'id' });
-                    console.log('✅ User upsert complete');
-                } catch (err) {
-                    console.warn('⚠️ User upsert failed (non-critical)');
-                }
-
-                // Step B: ALWAYS redirect to dashboard
-                console.log('🚀 Redirecting to /mis-inmuebles...');
-                window.location.href = '/mis-inmuebles';
-            };
-
-            try {
-                // Race between routing logic and timeout
-                await Promise.race([routingLogic(), timeoutPromise]);
-            } catch (error: any) {
-                console.error('❌ Routing error or timeout:', error.message);
-                // Failsafe - still go to dashboard
-                console.log('🆘 Failsafe redirect to /mis-inmuebles');
-                window.location.href = '/mis-inmuebles';
-            }
-        };
-
-        // Check if user is already logged in on mount (with timeout protection)
-        const checkExistingSession = async () => {
-            console.log('🔍 [Auth Page] Checking existing session...');
-            try {
-                // Use timeout to prevent hanging
-                const { data: { user } } = await Promise.race([
-                    supabase.auth.getUser(),
-                    new Promise<never>((_, reject) =>
-                        setTimeout(() => reject(new Error('getUser timeout')), 5000)
-                    )
-                ]);
-
-                if (user) {
-                    console.log('✅ [Auth Page] Found existing user:', user.email);
-                    await performClientSideRouting(user.id, user.email || '');
-                } else {
-                    console.log('ℹ️ [Auth Page] No existing session, showing login form');
-                }
-            } catch (err: any) {
-                console.warn('⚠️ [Auth Page] Session check error/timeout:', err.message);
-                // Don't block - user can still log in manually
-            }
-        };
-
-        checkExistingSession();
-
-        // Listen for auth state changes - handle BOTH SIGNED_IN and INITIAL_SESSION
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             async (event, session) => {
-                console.log('📡 [Auth Page] onAuthStateChange:', event, session?.user?.email);
+                console.log('📡 [Auth] Event:', event);
 
-                // Handle both SIGNED_IN (new login) and INITIAL_SESSION (already logged in)
                 if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session?.user) {
-                    console.log('🚀 [Auth Page] Triggering routing for event:', event);
-                    await performClientSideRouting(session.user.id, session.user.email || '');
+                    console.log('🚀 [Auth] Redirecting to /mis-inmuebles');
+                    setIsRedirecting(true);
+
+                    // Quick user upsert (non-blocking)
+                    try {
+                        await supabase
+                            .from('usuarios')
+                            .upsert({
+                                id: session.user.id,
+                                email: session.user.email,
+                                nombre: session.user.email?.split('@')[0] || 'Usuario',
+                            } as any, { onConflict: 'id' });
+                    } catch (err) {
+                        console.warn('⚠️ User upsert failed (non-critical)');
+                    }
+
+                    // UNCONDITIONAL redirect to dashboard
+                    window.location.href = '/mis-inmuebles';
                 }
             }
         );
@@ -156,10 +64,6 @@ function AuthContent() {
     // ============================================================
     // HANDLERS
     // ============================================================
-    const handleCancel = () => {
-        router.push('/');
-    };
-
     const handleSocial = async (provider: 'google' | 'facebook') => {
         setIsLoading(true);
         setError(null);
@@ -245,8 +149,6 @@ function AuthContent() {
                             rol: 'usuario',
                             tipo_usuario: intent as 'propietario' | 'inquilino' | 'ambos'
                         } as any, { onConflict: 'id' });
-
-                    console.log(`✅ Usuario insertado con tipo_usuario: ${intent} desde flujo publicar`);
                 }
             }
         } catch (err: any) {
@@ -261,9 +163,9 @@ function AuthContent() {
     };
 
     // ============================================================
-    // LOADING STATE: Creating Draft
+    // LOADING STATE: Redirecting
     // ============================================================
-    if (isCreatingDraft) {
+    if (isRedirecting) {
         return (
             <div className={`${fredoka.className} min-h-screen bg-white flex flex-col items-center justify-center`}>
                 <div className="text-center">
@@ -284,11 +186,8 @@ function AuthContent() {
     // ============================================================
     return (
         <div className={`${fredoka.className} flex min-h-screen bg-white`}>
-            {/* ═══════════════════════════════════════════════════════════════ */}
             {/* LEFT SIDE - INFO (Dark Blue) */}
-            {/* ═══════════════════════════════════════════════════════════════ */}
             <div className="hidden lg:flex w-1/2 bg-[#0f172a] text-white flex-col justify-center px-16 relative overflow-hidden">
-
                 {/* LOGO */}
                 <div className="absolute top-10 left-10">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -343,9 +242,7 @@ function AuthContent() {
                 </div>
             </div>
 
-            {/* ═══════════════════════════════════════════════════════════════ */}
             {/* RIGHT SIDE - FORM (White) */}
-            {/* ═══════════════════════════════════════════════════════════════ */}
             <div className="w-full lg:w-1/2 flex items-center justify-center p-8 lg:p-16">
                 <div className="w-full max-w-md">
                     <h2 className="text-3xl font-bold text-gray-900 mb-2">

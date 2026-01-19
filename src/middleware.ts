@@ -41,14 +41,12 @@ export async function middleware(request: NextRequest) {
     // Log for debugging
     console.log('🔐 [Middleware]', pathname, user ? `User: ${user.email}` : 'No user');
 
-    // NOTE: /mis-inmuebles protection DISABLED temporarily
-    // The server cannot read auth cookies from client-side Supabase login
-    // The page itself handles auth via getUser() in Server Component
-    // TODO: Fix cookie sync by using Supabase Auth Helpers middleware properly
+    // Protected routes: require authentication
+    const protectedRoutes = ['/mis-inmuebles', '/publicar/crear'];
+    const isProtectedRoute = protectedRoutes.some(route => pathname.startsWith(route));
 
-    // For /publicar/crear routes, require auth
-    if (!user && pathname.startsWith('/publicar/crear')) {
-        console.log('🚫 [Middleware] Unauthenticated access to publish wizard, redirecting...');
+    if (!user && isProtectedRoute) {
+        console.log('🚫 [Middleware] Unauthenticated access to protected route, redirecting...');
         return NextResponse.redirect(new URL('/publicar/auth', request.url));
     }
 
@@ -57,9 +55,8 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
     matcher: [
-        // Match protected routes that need session refresh
-        // NOTE: /mis-inmuebles REMOVED - page handles its own auth
-        // NOTE: /publicar/auth EXCLUDED - handles its own auth logic
+        // Protected routes that need session refresh and auth check
+        '/mis-inmuebles/:path*',
         '/publicar/crear/:path*',
     ],
 };
