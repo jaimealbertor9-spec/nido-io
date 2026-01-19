@@ -235,8 +235,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
                 // Handle SIGNED_IN and other events
                 if (newSession?.user) {
+                    console.log('✅ [AuthProvider] SIGNED_IN event - setting user immediately');
                     setSession(newSession);
                     setUser(newSession.user);
+                    // CRITICAL: Trust onAuthStateChange and mark auth as complete
+                    setLoading(false);
+                    setAuthChecked(true);
 
                     // Fetch rol AND tipo_usuario from database
                     const { data: profile } = await supabase
@@ -294,6 +298,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         // Wait for both splash to end and auth to be checked
         if (showSplash || !authChecked) return;
+
+        // CRITICAL: Skip auto-redirect from auth pages - they handle their own routing
+        if (pathname.includes('/auth') || pathname.includes('/publicar/auth')) {
+            console.log('🚫 [AuthProvider] Skipping auto-redirect from auth page');
+            return;
+        }
 
         // Only redirect from root path on initial load
         if (pathname === '/') {
