@@ -7,6 +7,7 @@ import { ChevronLeft, ChevronRight, LucideIcon, Loader2 } from 'lucide-react';
 import NextImage from 'next/image';
 import { supabase } from '@/lib/supabase';
 import { createPropertyDraft } from '@/app/actions/publish';
+import { useAuth } from '@/components/AuthProvider';
 
 // Import Fredoka font directly to force correct rendering
 const fredoka = Fredoka({
@@ -39,6 +40,7 @@ const PROPERTY_TYPES: PropertyOption[] = [
 export default function TipoInmueblePage() {
     const router = useRouter();
     const searchParams = useSearchParams();
+    const { user, loading: authLoading } = useAuth(); // Use AuthProvider instead of getSession()
 
     // Capture and preserve intent from URL parameter
     const intent = searchParams.get('intent') || 'propietario';
@@ -58,14 +60,7 @@ export default function TipoInmueblePage() {
 
     /**
      * SMART RESUME WORKFLOW - Triggered only on button click
-     * 
-     * Flow:
-     * 1. User selects a property type and clicks "Continuar"
-     * 2. Check if user is authenticated
-     *    - If NOT: Redirect to /publicar/auth with intent and type
-     *    - If YES: Check for existing draft
-     *      - If draft exists: Resume it
-     *      - If no draft: Create new one
+     * Now uses AuthProvider's user state instead of getSession()
      */
     const handleContinue = async () => {
         if (!selectedType) return;
@@ -73,44 +68,32 @@ export default function TipoInmueblePage() {
         setError(null);
         setIsProcessing(true);
 
-        let shouldResetLoading = true; // Track if we need to reset loading state
+        let shouldResetLoading = true;
 
         try {
             // ═══════════════════════════════════════════════════════════════
-            // STEP 1: Check authentication status (with timeout protection)
+            // STEP 1: Check auth from AuthProvider (no timeout needed!)
             // ═══════════════════════════════════════════════════════════════
-            console.log('🔍 [Tipo] Checking authentication with timeout...');
+            console.log('🔍 [Tipo] Checking authentication via AuthProvider...');
 
-            let session = null;
-            try {
-                // Race: Real Auth Check vs 3-second Timer
-                const authResult = await Promise.race([
-                    supabase.auth.getSession(),
-                    new Promise<never>((_, reject) =>
-                        setTimeout(() => reject(new Error('Auth timeout')), 3000)
-                    )
-                ]);
-                session = authResult.data?.session;
-                console.log('✅ [Tipo] Auth check completed');
-            } catch (authError: any) {
-                console.warn('⚠️ [Tipo] Auth check timed out or failed:', authError.message);
-                // Treat as unauthenticated - will redirect to auth page
-                session = null;
+            // Wait for AuthProvider to finish loading if it's still initializing
+            if (authLoading) {
+                console.log('⏳ [Tipo] Waiting for AuthProvider...');
+                await new Promise(resolve => setTimeout(resolve, 500));
             }
 
             // ═══════════════════════════════════════════════════════════════
             // GUEST USER: Redirect to auth page with type parameter
             // ═══════════════════════════════════════════════════════════════
-            if (!session || !session.user) {
+            if (!user) {
                 console.log(`🔄 [Tipo] Guest user → Redirecting to auth with type=${selectedType}`);
-                console.log('✅ [Tipo] Redirecting to Step 1...');
-                shouldResetLoading = false; // Don't reset on successful navigation
+                shouldResetLoading = false;
                 router.push(`/publicar/auth?intent=${intent}&type=${selectedType}`);
                 return;
             }
 
-            const userId = session.user.id;
-            console.log(`✅ [Tipo] Authenticated user: ${session.user.email}`);
+            const userId = user.id;
+            console.log(`✅ [Tipo] Authenticated user from AuthProvider: ${user.email}`);
 
             // ═══════════════════════════════════════════════════════════════
             // STEP 2: Check for existing draft (SINGLE DRAFT RULE)
@@ -128,7 +111,6 @@ export default function TipoInmueblePage() {
 
             if (draftError) {
                 console.error('❌ [Tipo] Error checking drafts:', draftError);
-                // Continue to create new draft if check fails
             }
 
             // ═══════════════════════════════════════════════════════════════
@@ -136,9 +118,8 @@ export default function TipoInmueblePage() {
             // ═══════════════════════════════════════════════════════════════
             if (existingDraft?.id) {
                 console.log(`📝 [Tipo] Found existing draft: ${existingDraft.id} → Resuming`);
-                console.log('✅ [Tipo] Redirecting to Step 1...');
-                shouldResetLoading = false; // Don't reset on successful navigation
-                router.push(`/publicar/crear/${existingDraft.id}/paso-1`);
+                shouldResetLoading = false;
+                window.location.href = `/publicar/crear/${existingDraft.id}/paso-1`;
                 return;
             }
 
@@ -149,16 +130,14 @@ export default function TipoInmueblePage() {
 
             const newDraftId = await createPropertyDraft(selectedType, userId);
             console.log(`✅ [Tipo] Draft created: ${newDraftId}`);
-            console.log('✅ [Tipo] Redirecting to Step 1...');
-            shouldResetLoading = false; // Don't reset on successful navigation
+            shouldResetLoading = false;
 
-            router.push(`/publicar/crear/${newDraftId}/paso-1`);
+            window.location.href = `/publicar/crear/${newDraftId}/paso-1`;
 
         } catch (err: any) {
             console.error('❌ [Tipo] Error in handleContinue:', err);
             setError(err.message || 'Error al procesar. Intenta de nuevo.');
         } finally {
-            // Always reset loading state unless we're navigating away
             if (shouldResetLoading) {
                 setIsProcessing(false);
             }

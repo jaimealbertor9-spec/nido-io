@@ -2,6 +2,14 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 
 export async function middleware(request: NextRequest) {
+    const pathname = request.nextUrl.pathname;
+
+    // SKIP: Auth pages handle their own routing - don't interfere
+    if (pathname.includes('/auth')) {
+        console.log('🔓 [Middleware] Skipping auth route:', pathname);
+        return NextResponse.next();
+    }
+
     let response = NextResponse.next({
         request: { headers: request.headers },
     });
@@ -31,17 +39,15 @@ export async function middleware(request: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser();
 
     // Log for debugging
-    console.log('🔐 [Middleware]', request.nextUrl.pathname, user ? `User: ${user.email}` : 'No user');
+    console.log('🔐 [Middleware]', pathname, user ? `User: ${user.email}` : 'No user');
 
-    // PROTECTED ROUTES LOGIC
-    // Only redirect if NO user AND trying to access protected routes
-    if (!user && request.nextUrl.pathname.startsWith('/mis-inmuebles')) {
-        console.log('🚫 [Middleware] Unauthenticated access to protected route, redirecting...');
-        return NextResponse.redirect(new URL('/bienvenidos', request.url));
-    }
+    // NOTE: /mis-inmuebles protection DISABLED temporarily
+    // The server cannot read auth cookies from client-side Supabase login
+    // The page itself handles auth via getUser() in Server Component
+    // TODO: Fix cookie sync by using Supabase Auth Helpers middleware properly
 
     // For /publicar/crear routes, require auth
-    if (!user && request.nextUrl.pathname.startsWith('/publicar/crear')) {
+    if (!user && pathname.startsWith('/publicar/crear')) {
         console.log('🚫 [Middleware] Unauthenticated access to publish wizard, redirecting...');
         return NextResponse.redirect(new URL('/publicar/auth', request.url));
     }
@@ -52,8 +58,8 @@ export async function middleware(request: NextRequest) {
 export const config = {
     matcher: [
         // Match protected routes that need session refresh
-        '/mis-inmuebles/:path*',
+        // NOTE: /mis-inmuebles REMOVED - page handles its own auth
+        // NOTE: /publicar/auth EXCLUDED - handles its own auth logic
         '/publicar/crear/:path*',
-        '/publicar/auth/:path*',
     ],
 };

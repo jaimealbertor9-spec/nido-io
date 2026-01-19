@@ -90,9 +90,11 @@ function AuthContent() {
                     console.log('✅ Step B complete, found:', liveProps?.length || 0, 'live properties');
                 }
 
+                // TEMP FIX: /mis-inmuebles has server-side auth that doesn't work
+                // Redirect to /publicar/tipo instead until we fix server cookie sync
                 if (liveProps && liveProps.length > 0) {
-                    console.log('🚀 Redirecting to Dashboard...');
-                    window.location.href = '/mis-inmuebles';
+                    console.log('🚀 User has live properties, redirecting to /publicar/tipo...');
+                    window.location.href = '/publicar/tipo';
                     return;
                 }
 
@@ -115,11 +117,8 @@ function AuthContent() {
                 if (drafts && drafts.length > 0) {
                     const draft = drafts[0];
                     console.log('📝 Redirecting to draft:', draft.id);
-                    if (draft.barrio && draft.direccion) {
-                        window.location.href = `/publicar/crear/${draft.id}/paso-2`;
-                    } else {
-                        window.location.href = `/publicar/crear/${draft.id}/paso-1`;
-                    }
+                    // Always go to paso-1 to avoid server-side auth issues
+                    window.location.href = `/publicar/crear/${draft.id}/paso-1`;
                     return;
                 }
 
@@ -133,30 +132,46 @@ function AuthContent() {
                 await Promise.race([routingLogic(), timeoutPromise]);
             } catch (error: any) {
                 console.error('❌ Routing error or timeout:', error.message);
-                // Failsafe redirect - always redirect somewhere
-                console.log('🆘 Failsafe redirect to /mis-inmuebles');
-                window.location.href = '/mis-inmuebles';
+                // Failsafe redirect - go to /publicar/tipo since /mis-inmuebles has server auth issues
+                console.log('🆘 Failsafe redirect to /publicar/tipo');
+                window.location.href = '/publicar/tipo';
             }
         };
 
-        // Check if user is already logged in on mount
+        // Check if user is already logged in on mount (with timeout protection)
         const checkExistingSession = async () => {
+            console.log('🔍 [Auth Page] Checking existing session...');
             try {
-                const { data: { user } } = await supabase.auth.getUser();
+                // Use timeout to prevent hanging
+                const { data: { user } } = await Promise.race([
+                    supabase.auth.getUser(),
+                    new Promise<never>((_, reject) =>
+                        setTimeout(() => reject(new Error('getUser timeout')), 5000)
+                    )
+                ]);
+
                 if (user) {
+                    console.log('✅ [Auth Page] Found existing user:', user.email);
                     await performClientSideRouting(user.id, user.email || '');
+                } else {
+                    console.log('ℹ️ [Auth Page] No existing session, showing login form');
                 }
-            } catch (err) {
-                console.error('Session check error:', err);
+            } catch (err: any) {
+                console.warn('⚠️ [Auth Page] Session check error/timeout:', err.message);
+                // Don't block - user can still log in manually
             }
         };
 
         checkExistingSession();
 
-        // Listen for new sign-ins
+        // Listen for auth state changes - handle BOTH SIGNED_IN and INITIAL_SESSION
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             async (event, session) => {
-                if (event === 'SIGNED_IN' && session?.user) {
+                console.log('📡 [Auth Page] onAuthStateChange:', event, session?.user?.email);
+
+                // Handle both SIGNED_IN (new login) and INITIAL_SESSION (already logged in)
+                if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session?.user) {
+                    console.log('🚀 [Auth Page] Triggering routing for event:', event);
                     await performClientSideRouting(session.user.id, session.user.email || '');
                 }
             }
