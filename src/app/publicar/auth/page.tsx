@@ -49,36 +49,56 @@ function AuthContent() {
             console.log('✅ Client-side routing started for:', userEmail);
             setIsCreatingDraft(true);
 
-            try {
-                // Step A: Attempt User Upsert (non-critical, ignore errors)
+            // Timeout wrapper to prevent indefinite hanging
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                setTimeout(() => reject(new Error('Routing timeout after 10s')), 10000);
+            });
+
+            const routingLogic = async () => {
+                // Step A: Attempt User Upsert (non-critical, don't await long)
+                console.log('🔄 Step A: User upsert...');
                 try {
-                    await supabase
+                    const { error: upsertError } = await supabase
                         .from('usuarios')
                         .upsert({
                             id: userId,
                             email: userEmail,
                             nombre: userEmail?.split('@')[0] || 'Usuario',
                         } as any, { onConflict: 'id' });
+
+                    if (upsertError) {
+                        console.warn('⚠️ Upsert error (non-fatal):', upsertError.message);
+                    } else {
+                        console.log('✅ Step A complete');
+                    }
                 } catch (err) {
-                    console.warn('Upsert non-fatal error:', err);
+                    console.warn('⚠️ Upsert exception (non-fatal):', err);
                 }
 
-                // Step B: Check for LIVE Properties (Strict Priority)
-                const { data: liveProps } = await supabase
+                // Step B: Check for LIVE Properties
+                console.log('🔄 Step B: Checking live properties...');
+                const { data: liveProps, error: liveError } = await supabase
                     .from('inmuebles')
                     .select('id')
                     .eq('propietario_id', userId)
                     .in('estado', ['en_revision', 'publicado', 'pendiente_verificacion', 'rechazado'])
                     .limit(1);
 
+                if (liveError) {
+                    console.error('❌ Step B error:', liveError.message);
+                } else {
+                    console.log('✅ Step B complete, found:', liveProps?.length || 0, 'live properties');
+                }
+
                 if (liveProps && liveProps.length > 0) {
-                    console.log('🚀 Found live property -> Dashboard');
+                    console.log('🚀 Redirecting to Dashboard...');
                     window.location.href = '/mis-inmuebles';
                     return;
                 }
 
-                // Step C: Check for DRAFTS (Secondary Priority)
-                const { data: drafts } = await supabase
+                // Step C: Check for DRAFTS
+                console.log('🔄 Step C: Checking drafts...');
+                const { data: drafts, error: draftError } = await supabase
                     .from('inmuebles')
                     .select('id, barrio, direccion')
                     .eq('propietario_id', userId)
@@ -86,9 +106,15 @@ function AuthContent() {
                     .order('created_at', { ascending: false })
                     .limit(1);
 
+                if (draftError) {
+                    console.error('❌ Step C error:', draftError.message);
+                } else {
+                    console.log('✅ Step C complete, found:', drafts?.length || 0, 'drafts');
+                }
+
                 if (drafts && drafts.length > 0) {
                     const draft = drafts[0];
-                    console.log('📝 Found draft -> Resuming:', draft.id);
+                    console.log('📝 Redirecting to draft:', draft.id);
                     if (draft.barrio && draft.direccion) {
                         window.location.href = `/publicar/crear/${draft.id}/paso-2`;
                     } else {
@@ -98,12 +124,17 @@ function AuthContent() {
                 }
 
                 // Step D: Default (New User)
-                console.log('✨ No history -> New Wizard');
+                console.log('✨ No history -> Redirecting to New Wizard...');
                 window.location.href = '/publicar/tipo';
+            };
 
-            } catch (error) {
-                console.error('Routing error:', error);
-                // Failsafe redirect
+            try {
+                // Race between routing logic and timeout
+                await Promise.race([routingLogic(), timeoutPromise]);
+            } catch (error: any) {
+                console.error('❌ Routing error or timeout:', error.message);
+                // Failsafe redirect - always redirect somewhere
+                console.log('🆘 Failsafe redirect to /mis-inmuebles');
                 window.location.href = '/mis-inmuebles';
             }
         };

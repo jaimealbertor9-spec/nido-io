@@ -1,11 +1,11 @@
-import { createServerClient } from '@supabase/ssr';
+import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 
 export default async function MisInmueblesPage() {
-    const cookieStore = cookies();
+    const cookieStore = await cookies();
 
-    // CONEXIÓN MODERNA USANDO @supabase/ssr (Lo que ya tienes instalado)
+    // CONEXIÓN MODERNA USANDO @supabase/ssr con manejo completo de cookies
     const supabase = createServerClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -14,16 +14,30 @@ export default async function MisInmueblesPage() {
                 get(name: string) {
                     return cookieStore.get(name)?.value;
                 },
+                set(name: string, value: string, options: CookieOptions) {
+                    try {
+                        cookieStore.set({ name, value, ...options });
+                    } catch (error) {
+                        // Handle cookie setting in Server Component
+                    }
+                },
+                remove(name: string, options: CookieOptions) {
+                    try {
+                        cookieStore.set({ name, value: '', ...options });
+                    } catch (error) {
+                        // Handle cookie removal in Server Component
+                    }
+                },
             },
         }
     );
 
-    // 1. Verificar Sesión
-    const {
-        data: { session },
-    } = await supabase.auth.getSession();
+    // 1. Verificar Sesión usando getUser() (NO getSession) - Crítico para SSR
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
 
-    if (!session) {
+    console.log('🔍 [MisInmuebles] Auth check:', user?.email || 'No user', authError?.message || '');
+
+    if (!user) {
         redirect('/bienvenidos');
     }
 
@@ -31,7 +45,7 @@ export default async function MisInmueblesPage() {
     const { data: inmuebles } = await supabase
         .from('inmuebles')
         .select('*')
-        .eq('user_id', session.user.id)
+        .eq('user_id', user.id)
         .order('created_at', { ascending: false })
         .limit(1);
 
