@@ -75,56 +75,29 @@ function AuthContent() {
                     console.warn('⚠️ Upsert exception (non-fatal):', err);
                 }
 
-                // Step B: Check for LIVE Properties
-                console.log('🔄 Step B: Checking live properties...');
-                const { data: liveProps, error: liveError } = await supabase
-                    .from('inmuebles')
-                    .select('id')
-                    .eq('propietario_id', userId)
-                    .in('estado', ['en_revision', 'publicado', 'pendiente_verificacion', 'rechazado'])
-                    .limit(1);
+                // ============================================================
+                // SIMPLIFIED ROUTING: Always go to /mis-inmuebles
+                // The dashboard now handles drafts, properties, and create button
+                // ============================================================
 
-                if (liveError) {
-                    console.error('❌ Step B error:', liveError.message);
-                } else {
-                    console.log('✅ Step B complete, found:', liveProps?.length || 0, 'live properties');
+                // Step A: Quick user upsert (non-blocking)
+                console.log('🔄 Step A: User upsert...');
+                try {
+                    await supabase
+                        .from('usuarios')
+                        .upsert({
+                            id: userId,
+                            email: userEmail,
+                            nombre: userEmail?.split('@')[0] || 'Usuario',
+                        } as any, { onConflict: 'id' });
+                    console.log('✅ User upsert complete');
+                } catch (err) {
+                    console.warn('⚠️ User upsert failed (non-critical)');
                 }
 
-                // TEMP FIX: /mis-inmuebles has server-side auth that doesn't work
-                // Redirect to /publicar/tipo instead until we fix server cookie sync
-                if (liveProps && liveProps.length > 0) {
-                    console.log('🚀 User has live properties, redirecting to /publicar/tipo...');
-                    window.location.href = '/publicar/tipo';
-                    return;
-                }
-
-                // Step C: Check for DRAFTS
-                console.log('🔄 Step C: Checking drafts...');
-                const { data: drafts, error: draftError } = await supabase
-                    .from('inmuebles')
-                    .select('id, barrio, direccion')
-                    .eq('propietario_id', userId)
-                    .eq('estado', 'borrador')
-                    .order('created_at', { ascending: false })
-                    .limit(1);
-
-                if (draftError) {
-                    console.error('❌ Step C error:', draftError.message);
-                } else {
-                    console.log('✅ Step C complete, found:', drafts?.length || 0, 'drafts');
-                }
-
-                if (drafts && drafts.length > 0) {
-                    const draft = drafts[0];
-                    console.log('📝 Redirecting to draft:', draft.id);
-                    // Always go to paso-1 to avoid server-side auth issues
-                    window.location.href = `/publicar/crear/${draft.id}/paso-1`;
-                    return;
-                }
-
-                // Step D: Default (New User)
-                console.log('✨ No history -> Redirecting to New Wizard...');
-                window.location.href = '/publicar/tipo';
+                // Step B: ALWAYS redirect to dashboard
+                console.log('🚀 Redirecting to /mis-inmuebles...');
+                window.location.href = '/mis-inmuebles';
             };
 
             try {
@@ -132,9 +105,9 @@ function AuthContent() {
                 await Promise.race([routingLogic(), timeoutPromise]);
             } catch (error: any) {
                 console.error('❌ Routing error or timeout:', error.message);
-                // Failsafe redirect - go to /publicar/tipo since /mis-inmuebles has server auth issues
-                console.log('🆘 Failsafe redirect to /publicar/tipo');
-                window.location.href = '/publicar/tipo';
+                // Failsafe - still go to dashboard
+                console.log('🆘 Failsafe redirect to /mis-inmuebles');
+                window.location.href = '/mis-inmuebles';
             }
         };
 

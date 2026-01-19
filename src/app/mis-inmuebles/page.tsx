@@ -1,171 +1,326 @@
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
+'use client';
 
-export default async function MisInmueblesPage() {
-    const cookieStore = await cookies();
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { useAuth } from '@/components/AuthProvider';
+import { supabase } from '@/lib/supabase';
+import { Fredoka } from 'next/font/google';
+import { Plus, Home, Clock, CheckCircle, AlertCircle, Edit, Loader2 } from 'lucide-react';
+import NextImage from 'next/image';
 
-    // CONEXIÓN MODERNA USANDO @supabase/ssr con manejo completo de cookies
-    const supabase = createServerClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-        {
-            cookies: {
-                get(name: string) {
-                    return cookieStore.get(name)?.value;
-                },
-                set(name: string, value: string, options: CookieOptions) {
-                    try {
-                        cookieStore.set({ name, value, ...options });
-                    } catch (error) {
-                        // Handle cookie setting in Server Component
-                    }
-                },
-                remove(name: string, options: CookieOptions) {
-                    try {
-                        cookieStore.set({ name, value: '', ...options });
-                    } catch (error) {
-                        // Handle cookie removal in Server Component
-                    }
-                },
-            },
+const fredoka = Fredoka({
+    subsets: ['latin'],
+    weight: ['300', '400', '500', '600', '700']
+});
+
+// Property type from database (flexible to match actual schema)
+interface Inmueble {
+    id: string;
+    tipo_inmueble?: string | null;
+    barrio?: string | null;
+    direccion?: string | null;
+    precio?: number | null;
+    estado: string;
+    created_at: string;
+    descripcion?: string | null;
+    area_m2?: number | null;
+}
+
+export default function MisInmueblesPage() {
+    const router = useRouter();
+    const { user, loading: authLoading } = useAuth();
+
+    const [properties, setProperties] = useState<Inmueble[]>([]);
+    const [drafts, setDrafts] = useState<Inmueble[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+
+    // Fetch user's properties when authenticated
+    useEffect(() => {
+        const fetchProperties = async () => {
+            if (!user) return;
+
+            setIsLoading(true);
+            setError(null);
+
+            try {
+                console.log('🔍 [MisInmuebles] Fetching properties for:', user.email);
+
+                // Fetch all properties (both published and drafts)
+                const { data, error: fetchError } = await supabase
+                    .from('inmuebles')
+                    .select('id, tipo_inmueble, barrio, direccion, precio, estado, created_at, descripcion, area_m2')
+                    .eq('propietario_id', user.id)
+                    .order('created_at', { ascending: false });
+
+                if (fetchError) {
+                    console.error('❌ [MisInmuebles] Fetch error:', fetchError);
+                    setError('Error al cargar tus propiedades');
+                    return;
+                }
+
+                console.log('✅ [MisInmuebles] Found', data?.length || 0, 'properties');
+
+                // Separate drafts from published/in-review
+                const allProperties = (data || []) as Inmueble[];
+                setDrafts(allProperties.filter(p => p.estado === 'borrador'));
+                setProperties(allProperties.filter(p => p.estado !== 'borrador'));
+
+            } catch (err: any) {
+                console.error('❌ [MisInmuebles] Exception:', err);
+                setError('Error inesperado');
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        if (!authLoading) {
+            if (user) {
+                fetchProperties();
+            } else {
+                // Not authenticated - redirect to login
+                console.log('🔒 [MisInmuebles] No user, redirecting to auth...');
+                router.push('/publicar/auth');
+            }
         }
-    );
+    }, [user, authLoading, router]);
 
-    // 1. Verificar Sesión usando getUser() (NO getSession) - Crítico para SSR
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    // Helper: Get status badge
+    const getStatusBadge = (estado: string) => {
+        switch (estado) {
+            case 'en_revision':
+            case 'pendiente_verificacion':
+                return (
+                    <span className="px-3 py-1 rounded-full text-xs font-bold bg-yellow-100 text-yellow-700 border border-yellow-200 flex items-center gap-1">
+                        <Clock size={12} /> En Revisión
+                    </span>
+                );
+            case 'publicado':
+                return (
+                    <span className="px-3 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700 border border-green-200 flex items-center gap-1">
+                        <CheckCircle size={12} /> Publicado
+                    </span>
+                );
+            case 'rechazado':
+                return (
+                    <span className="px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-700 border border-red-200 flex items-center gap-1">
+                        <AlertCircle size={12} /> Rechazado
+                    </span>
+                );
+            default:
+                return null;
+        }
+    };
 
-    console.log('🔍 [MisInmuebles] Auth check:', user?.email || 'No user', authError?.message || '');
+    // Helper: Navigate to continue draft
+    const handleContinueDraft = (draft: Inmueble) => {
+        // Check which step to go to based on filled fields
+        const hasStep1Data = draft.barrio && draft.direccion;
 
-    if (!user) {
-        redirect('/bienvenidos');
-    }
-
-    // 2. Obtener el Inmueble del usuario
-    const { data: inmuebles } = await supabase
-        .from('inmuebles')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-    const inmueble = inmuebles && inmuebles.length > 0 ? inmuebles[0] : null;
-
-    // =====================================================================
-    // 🧠 LÓGICA DE CEREBRO (SMART ROUTER)
-    // =====================================================================
-
-    // CASO A: Usuario Nuevo (Sin inmuebles) -> A elegir tipo
-    if (!inmueble) {
-        redirect('/publicar/tipo');
-    }
-
-    // CASO B: Está en Borrador -> Verificar qué le falta
-    if (inmueble.estado === 'borrador') {
-        // Validamos campos del Paso 1 para saber dónde enviarlo
-        const paso1Completo =
-            inmueble.barrio && inmueble.area_construida && inmueble.direccion;
-
-        if (!paso1Completo) {
-            redirect('/publicar/paso-1');
+        if (hasStep1Data) {
+            window.location.href = `/publicar/crear/${draft.id}/paso-2`;
         } else {
-            redirect('/publicar/paso-2');
+            window.location.href = `/publicar/crear/${draft.id}/paso-1`;
         }
+    };
+
+    // Loading state
+    if (authLoading || isLoading) {
+        return (
+            <div className={`${fredoka.className} min-h-screen bg-gradient-to-b from-gray-50 to-white flex items-center justify-center`}>
+                <div className="text-center">
+                    <Loader2 className="w-12 h-12 animate-spin text-[#0c263b] mx-auto mb-4" />
+                    <p className="text-gray-500 text-lg">Cargando tus propiedades...</p>
+                </div>
+            </div>
+        );
     }
-
-    // CASO C: En Revisión o Publicado -> SE QUEDA AQUÍ (Renderizamos Dashboard)
-
-    // =====================================================================
-    // 🎨 DISEÑO UI
-    // =====================================================================
 
     return (
-        <div className="min-h-screen bg-gray-50 p-6 md:p-12 font-sans">
-            <div className="max-w-5xl mx-auto space-y-8">
+        <div className={`${fredoka.className} min-h-screen bg-gradient-to-b from-gray-50 to-white`}>
 
-                {/* Header */}
-                <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div>
-                        <h1 className="text-3xl font-bold text-gray-900">
-                            Hola, Usuario 👋
-                        </h1>
-                        <p className="text-gray-500 mt-1">
-                            Aquí tienes el resumen de tu actividad inmobiliaria.
-                        </p>
-                    </div>
+            {/* Header Logo */}
+            <div className="absolute top-6 right-6 z-30">
+                <NextImage
+                    src="/Logo solo Nido.png"
+                    alt="Nido Logo"
+                    width={50}
+                    height={50}
+                    className="object-contain"
+                    priority
+                />
+            </div>
+
+            <div className="max-w-6xl mx-auto px-4 sm:px-6 pt-16 pb-24">
+
+                {/* Welcome Header */}
+                <header className="mb-10">
+                    <h1 className="text-3xl sm:text-4xl font-bold text-[#0c263b] mb-2">
+                        Hola, {user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Usuario'} 👋
+                    </h1>
+                    <p className="text-gray-500 text-lg">
+                        Aquí puedes gestionar tus propiedades y publicaciones.
+                    </p>
                 </header>
 
-                {/* Banner Principal */}
-                <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-indigo-600 to-purple-600 p-8 shadow-lg text-white">
-                    <div className="relative z-10 max-w-lg">
-                        <h2 className="text-2xl font-bold mb-2">
-                            Estado de tu Propiedad
-                        </h2>
-                        <p className="text-indigo-100">
-                            Gestiona el estado de tu publicación y mantente al día con las notificaciones.
-                        </p>
-                    </div>
-                    {/* Decoración */}
-                    <div className="absolute top-0 right-0 -mt-10 -mr-10 h-64 w-64 rounded-full bg-white opacity-10 blur-3xl"></div>
+                {/* Create New Property Button - ALWAYS VISIBLE */}
+                <div className="mb-10">
+                    <button
+                        onClick={() => router.push('/publicar/tipo')}
+                        className="
+                            w-full sm:w-auto
+                            flex items-center justify-center gap-3
+                            bg-[#0c263b] text-white
+                            px-8 py-4
+                            rounded-2xl
+                            font-bold text-lg
+                            shadow-lg
+                            hover:scale-105 hover:brightness-110
+                            transition-all duration-200
+                        "
+                    >
+                        <Plus size={24} strokeWidth={2.5} />
+                        Publicar Nuevo Inmueble
+                    </button>
                 </div>
 
-                {/* Sección: Mis Inmuebles */}
-                <section>
-                    <div className="flex items-center justify-between mb-6">
-                        <h3 className="text-xl font-bold text-gray-800">Mis Inmuebles</h3>
+                {/* Error Message */}
+                {error && (
+                    <div className="mb-8 p-4 bg-red-50 border border-red-200 rounded-xl text-red-600">
+                        {error}
                     </div>
+                )}
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {/* Tarjeta del Inmueble */}
-                        <div className="group bg-white rounded-2xl p-5 shadow-sm hover:shadow-md transition-all border border-gray-100">
+                {/* DRAFTS Section */}
+                {drafts.length > 0 && (
+                    <section className="mb-12">
+                        <h2 className="text-xl font-bold text-[#0c263b] mb-4 flex items-center gap-2">
+                            <Edit size={20} /> Borradores ({drafts.length})
+                        </h2>
+                        <p className="text-gray-500 mb-6">
+                            Tienes publicaciones sin terminar. Haz clic para continuar donde lo dejaste.
+                        </p>
 
-                            {/* Encabezado: Icono y Badge */}
-                            <div className="flex justify-between items-start mb-4">
-                                <div className="p-2 bg-indigo-50 rounded-lg text-indigo-600">
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-                                    </svg>
-                                </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {drafts.map((draft) => (
+                                <button
+                                    key={draft.id}
+                                    onClick={() => handleContinueDraft(draft)}
+                                    className="
+                                        bg-white rounded-2xl p-5 
+                                        border-2 border-dashed border-yellow-300
+                                        hover:border-yellow-500 hover:shadow-lg
+                                        transition-all duration-200
+                                        text-left
+                                    "
+                                >
+                                    <div className="flex justify-between items-start mb-3">
+                                        <div className="p-2 bg-yellow-50 rounded-lg text-yellow-600">
+                                            <Home size={24} />
+                                        </div>
+                                        <span className="px-3 py-1 rounded-full text-xs font-bold bg-yellow-100 text-yellow-700">
+                                            Borrador
+                                        </span>
+                                    </div>
 
-                                {inmueble.estado === 'en_revision' && (
-                                    <span className="px-3 py-1 rounded-full text-xs font-bold bg-yellow-100 text-yellow-700 border border-yellow-200">
-                                        En Revisión
-                                    </span>
-                                )}
-                                {inmueble.estado === 'publicado' && (
-                                    <span className="px-3 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700 border border-green-200">
-                                        Publicado
-                                    </span>
-                                )}
-                            </div>
+                                    <h3 className="text-lg font-bold text-gray-900 mb-1">
+                                        {draft.tipo_inmueble || 'Inmueble'}
+                                        {draft.barrio ? ` en ${draft.barrio}` : ''}
+                                    </h3>
 
-                            {/* Info */}
-                            <h4 className="text-lg font-bold text-gray-900 mb-1">
-                                {inmueble.tipo_inmueble || 'Propiedad'} en {inmueble.barrio || '...'}
-                            </h4>
-                            <p className="text-sm text-gray-500 mb-4 line-clamp-2">
-                                {inmueble.descripcion || 'Sin descripción disponible.'}
-                            </p>
+                                    <p className="text-sm text-gray-500 mb-4">
+                                        {draft.direccion || 'Sin dirección aún'}
+                                    </p>
 
-                            {/* Precio */}
-                            <div className="mb-6">
-                                <p className="text-xs text-gray-400 uppercase font-semibold">Precio de Venta</p>
-                                <p className="text-xl font-bold text-gray-900">
-                                    {inmueble.precio
-                                        ? new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP' }).format(inmueble.precio)
-                                        : '$ ---'}
-                                </p>
-                            </div>
-
-                            {/* Footer */}
-                            <div className="pt-4 border-t border-gray-100">
-                                <button className="w-full bg-gray-50 text-gray-700 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-100 transition">
-                                    Ver Detalle
+                                    <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+                                        <span className="text-xs text-gray-400">
+                                            Creado: {new Date(draft.created_at).toLocaleDateString('es-CO')}
+                                        </span>
+                                        <span className="text-[#0c263b] font-semibold text-sm flex items-center gap-1">
+                                            Continuar →
+                                        </span>
+                                    </div>
                                 </button>
-                            </div>
-
+                            ))}
                         </div>
-                    </div>
+                    </section>
+                )}
+
+                {/* PUBLISHED/IN-REVIEW Properties Section */}
+                <section>
+                    <h2 className="text-xl font-bold text-[#0c263b] mb-4 flex items-center gap-2">
+                        <Home size={20} /> Mis Propiedades ({properties.length})
+                    </h2>
+
+                    {properties.length === 0 ? (
+                        <div className="bg-white rounded-2xl p-10 text-center border border-gray-100 shadow-sm">
+                            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <Home size={32} className="text-gray-400" />
+                            </div>
+                            <h3 className="text-lg font-semibold text-gray-700 mb-2">
+                                Aún no tienes propiedades publicadas
+                            </h3>
+                            <p className="text-gray-500 mb-6">
+                                Comienza publicando tu primer inmueble y llega a miles de personas.
+                            </p>
+                            <button
+                                onClick={() => router.push('/publicar/tipo')}
+                                className="
+                                    bg-[#0c263b] text-white
+                                    px-6 py-3
+                                    rounded-xl
+                                    font-semibold
+                                    hover:brightness-110
+                                    transition-all
+                                "
+                            >
+                                Publicar mi primer inmueble
+                            </button>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {properties.map((property) => (
+                                <div
+                                    key={property.id}
+                                    className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-md transition-all"
+                                >
+                                    <div className="flex justify-between items-start mb-4">
+                                        <div className="p-2 bg-indigo-50 rounded-lg text-indigo-600">
+                                            <Home size={24} />
+                                        </div>
+                                        {getStatusBadge(property.estado)}
+                                    </div>
+
+                                    <h3 className="text-lg font-bold text-gray-900 mb-1">
+                                        {property.tipo_inmueble || 'Propiedad'} en {property.barrio || '...'}
+                                    </h3>
+
+                                    <p className="text-sm text-gray-500 mb-4 line-clamp-2">
+                                        {property.descripcion || property.direccion || 'Sin descripción disponible.'}
+                                    </p>
+
+                                    {property.precio && (
+                                        <div className="mb-4">
+                                            <p className="text-xs text-gray-400 uppercase font-semibold">Precio</p>
+                                            <p className="text-xl font-bold text-gray-900">
+                                                {new Intl.NumberFormat('es-CO', {
+                                                    style: 'currency',
+                                                    currency: 'COP',
+                                                    minimumFractionDigits: 0
+                                                }).format(property.precio)}
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    <div className="pt-4 border-t border-gray-100">
+                                        <button className="w-full bg-gray-50 text-gray-700 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-100 transition">
+                                            Ver Detalle
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </section>
 
             </div>
