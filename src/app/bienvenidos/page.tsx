@@ -18,8 +18,8 @@ export default function BienvenidosPage() {
     };
 
     const handlePublicar = () => {
-        // Route to property type selection with propietario intent
-        router.push('/publicar/tipo?intent=propietario');
+        // Route directly to Auth page (Dashboard-Centric architecture)
+        router.push('/publicar/auth?intent=propietario');
     };
 
     return (

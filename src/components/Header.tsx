@@ -32,18 +32,19 @@ export default function Header() {
         setMounted(true);
     }, []);
 
-    // HIDE HEADER on: splash, welcome, /publicar/*, /verificacion, and admin verification routes
+    // HIDE HEADER on: splash, welcome, /publicar/*, /verificacion, admin, and dashboard routes
     // Using CSS visibility instead of return null to prevent hydration errors
     const hiddenRoutes = [
         '/',                    // Splash
         '/bienvenidos',         // Welcome/marketing
         '/verificacion',        // User verification tunnel
-        '/admin/verificaciones' // Admin verification panel
+        '/admin/verificaciones', // Admin verification panel
+        '/mis-inmuebles'        // Dashboard (has its own sidebar)
     ];
 
     // Null-safe check: pathname can be null during SSR
     const currentPath = pathname ?? '';
-    const isHidden = hiddenRoutes.includes(currentPath) || currentPath.startsWith('/publicar');
+    const isHidden = hiddenRoutes.includes(currentPath) || currentPath.startsWith('/publicar') || currentPath.startsWith('/mis-inmuebles');
 
     return (
         <header className={`sticky top-0 z-50 bg-white/95 backdrop-blur-sm shadow-sm border-b border-gray-100 ${isHidden ? 'hidden' : ''}`}>

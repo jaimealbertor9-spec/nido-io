@@ -55,8 +55,8 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
     matcher: [
-        // Protected routes that need session refresh and auth check
-        '/mis-inmuebles/:path*',
+        // Only protect publish wizard routes
+        // NOTE: /mis-inmuebles removed - page handles its own client-side auth
         '/publicar/crear/:path*',
     ],
 };
