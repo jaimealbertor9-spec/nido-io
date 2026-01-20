@@ -63,7 +63,7 @@ export default function RegisterPage() {
                 .from('usuarios')
                 .upsert({
                     id: authData.user.id,
-                    email: authData.user.email,
+                    email: email.trim(),               // Use form email (guaranteed to exist)
                     nombre: name.trim(),
                     rol: 'usuario',                    // Default security role
                     tipo_usuario: intent || null       // Business type from intent, or null for selection

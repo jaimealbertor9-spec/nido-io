@@ -1,22 +1,22 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/AuthProvider';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
 import localFont from 'next/font/local';
 
-// 1. CONFIGURACIÓN DE LA FUENTE BRASLEY
-const brasley = localFont({
+// 1. FUENTE LUFGA
+const lufga = localFont({
     src: [
         {
-            path: '../../../public/fonts/Brasley-Medium.otf',
-            weight: '500',
+            path: '../../../public/fonts/Lufga-Regular.otf',
+            weight: '400',
             style: 'normal',
         },
     ],
-    variable: '--font-brasley',
+    variable: '--font-lufga',
     display: 'swap',
 });
 
@@ -37,10 +37,9 @@ interface Property {
     area_m2?: number | null;
 }
 
-// --- ESTILOS VISUALES (Brand & Glass) ---
-const textDark = "text-[#0c263b]";
-const btnGlass = "bg-white/40 hover:bg-white/80 border border-white/50 backdrop-blur-md shadow-sm transition-all active:scale-95 text-[#0c263b]";
-const panelGlass = "bg-white/60 backdrop-blur-2xl border border-white/60 shadow-[0_8px_30px_rgb(0,0,0,0.04)]";
+// --- COLORES EXACTOS ---
+const primaryBlue = "bg-[#2563EB]";
+const bgLight = "bg-[#F3F4F6]";
 
 export default function MisInmueblesPage() {
     const router = useRouter();
@@ -50,12 +49,32 @@ export default function MisInmueblesPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [activeTab, setActiveTab] = useState<number>(0);
     const [isDeleting, setIsDeleting] = useState<string | null>(null);
+    const [showUserMenu, setShowUserMenu] = useState(false);
 
-    // Fetch ALL properties for the user
+    // Refs to prevent loops
+    const dataFetched = useRef(false);
+    const hasRedirected = useRef(false);
+
+    // Fetch properties ONCE when user is available
     useEffect(() => {
-        const fetchProperties = async () => {
-            if (!user) return;
+        // Skip if still loading auth
+        if (authLoading) return;
 
+        // If no user and haven't redirected yet, redirect
+        if (!user) {
+            if (!hasRedirected.current) {
+                hasRedirected.current = true;
+                console.log('🔒 [Dashboard] No user, redirecting to auth...');
+                router.push('/publicar/auth?intent=propietario');
+            }
+            return;
+        }
+
+        // If already fetched data, skip
+        if (dataFetched.current) return;
+        dataFetched.current = true;
+
+        const fetchProperties = async () => {
             setIsLoading(true);
 
             try {
@@ -69,6 +88,7 @@ export default function MisInmueblesPage() {
 
                 if (fetchError) {
                     console.error('❌ [Dashboard] Fetch error:', fetchError);
+                    setIsLoading(false);
                     return;
                 }
 
@@ -82,15 +102,9 @@ export default function MisInmueblesPage() {
             }
         };
 
-        if (!authLoading) {
-            if (user) {
-                fetchProperties();
-            } else {
-                console.log('🔒 [Dashboard] No user, redirecting to auth...');
-                router.push('/publicar/auth?intent=propietario');
-            }
-        }
-    }, [user, authLoading, router]);
+        fetchProperties();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user, authLoading]);
 
     // Filter properties based on active tab
     const filteredProperties = properties.filter(p => {
@@ -144,75 +158,87 @@ export default function MisInmueblesPage() {
         }
     };
 
+    // Logout handler
+    const handleLogout = async () => {
+        setShowUserMenu(false);
+        await supabase.auth.signOut();
+        router.push('/bienvenidos');
+    };
+
     const hasProperties = properties.length > 0;
 
     // Estadísticas
     const totalProps = properties.length;
     const publishedProps = properties.filter(p => p.estado === 'publicado').length;
-    const inReviewProps = properties.filter(p => p.estado === 'en_revision' || p.estado === 'pendiente_verificacion').length;
-    const draftProps = properties.filter(p => p.estado === 'borrador').length;
 
     // Loading state
     if (authLoading || isLoading) {
         return (
-            <div className={`min-h-screen bg-[#F3F4F6] flex items-center justify-center ${brasley.className}`}>
+            <div className={`min-h-screen ${bgLight} flex items-center justify-center ${lufga.className}`}>
                 <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#0c263b] mx-auto"></div>
-                    <p className="text-gray-500 mt-4 text-lg font-medium">Cargando tus propiedades...</p>
+                    <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#2563EB] mx-auto"></div>
+                    <p className="text-slate-500 mt-4 text-lg font-medium">Cargando tus propiedades...</p>
                 </div>
             </div>
         );
     }
 
-    const tabLabels = ['Todas las Propiedades', 'Publicadas', 'En Revisión', 'Borradores'];
+    // Tab labels
+    const tabLabels = ['Todas', 'Publicadas', 'En Revisión', 'Borradores'];
+
+    // Standardized badge classes
+    const badgeBase = "text-[9px] font-bold px-3 py-1.5 rounded-full shadow-sm uppercase tracking-wider";
 
     return (
         <>
             <link href="https://fonts.googleapis.com/icon?family=Material+Symbols+Outlined" rel="stylesheet" />
             <style>{`
                 .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+                .shadow-glass { box-shadow: 0 4px 30px rgba(0,0,0,0.05); }
             `}</style>
 
-            <div className={`flex h-screen bg-[#F3F4F6] ${brasley.className} overflow-hidden selection:bg-[#0c263b]/10 selection:text-[#0c263b]`}>
+            <div className={`flex h-screen ${bgLight} ${lufga.className} text-slate-800 overflow-hidden`}>
 
                 {/* ============================================================ */}
                 {/* SIDEBAR */}
                 {/* ============================================================ */}
-                <aside className="w-64 bg-white/80 backdrop-blur-xl border-r border-white/60 hidden md:flex flex-col h-full shrink-0 z-20">
-                    <div className="h-24 flex items-center px-6 border-b border-gray-100/50">
-                        <div className="w-10 h-10 flex items-center justify-center mr-3 bg-white rounded-xl shadow-sm border border-gray-50">
-                            <img src="/Logo solo Nido.png" alt="Nido" className="w-6 h-6 object-contain" />
-                        </div>
+                <aside className="w-64 flex flex-col bg-white/65 backdrop-blur-xl border-r border-white/50 h-full shrink-0 z-20 shadow-[0_4px_30px_rgba(0,0,0,0.05)] hidden md:flex">
+                    <div className="p-6 flex items-center gap-3">
+                        <img src="/Logo solo Nido.png" alt="Nido" className="w-10 h-10 object-contain" />
                         <div>
-                            <h1 className={`font-bold text-xl tracking-tight ${textDark}`}>Nido</h1>
-                            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Panel Propietario</p>
+                            <h1 className="font-bold text-lg tracking-tight text-slate-900">Nido</h1>
+                            <p className="text-xs text-slate-500">Panel Propietario</p>
                         </div>
                     </div>
 
-                    <nav className="flex-1 px-4 space-y-2 mt-8">
-                        <Link href="/mis-inmuebles" className={`flex items-center px-4 py-3 bg-[#0c263b]/5 ${textDark} rounded-xl transition-all font-medium border border-[#0c263b]/5`}>
-                            <span className="material-symbols-outlined mr-3 text-[20px]">dashboard</span>
-                            <span>Dashboard</span>
+                    <nav className="flex-1 px-4 space-y-2 py-4">
+                        <Link href="/mis-inmuebles" className="flex items-center gap-3 px-4 py-3 bg-white/50 rounded-xl text-[#2563EB] font-bold border border-white/40 shadow-sm transition-all hover:scale-[1.02]">
+                            <span className="material-symbols-outlined">dashboard</span>
+                            Dashboard
                         </Link>
-                        <button className="w-full flex items-center px-4 py-3 text-gray-500 hover:bg-gray-50 rounded-xl transition-all font-medium hover:text-[#0c263b]">
-                            <span className="material-symbols-outlined mr-3 text-[20px]">domain</span>
-                            <span>Mis Propiedades</span>
+                        <button className="w-full flex items-center gap-3 px-4 py-3 text-slate-600 hover:bg-white/30 rounded-xl transition-all hover:text-slate-900">
+                            <span className="material-symbols-outlined">holiday_village</span>
+                            Mis Propiedades
                         </button>
-                        <button className="w-full flex items-center px-4 py-3 text-gray-500 hover:bg-gray-50 rounded-xl transition-all font-medium hover:text-[#0c263b]">
-                            <span className="material-symbols-outlined mr-3 text-[20px]">analytics</span>
-                            <span>Analíticas</span>
+                        <button className="w-full flex items-center gap-3 px-4 py-3 text-slate-600 hover:bg-white/30 rounded-xl transition-all hover:text-slate-900">
+                            <span className="material-symbols-outlined">analytics</span>
+                            Analíticas
                         </button>
-                        <button className="w-full flex items-center px-4 py-3 text-gray-500 hover:bg-gray-50 rounded-xl transition-all font-medium hover:text-[#0c263b]">
-                            <span className="material-symbols-outlined mr-3 text-[20px]">chat_bubble_outline</span>
-                            <span>Mensajes</span>
+                        <button className="w-full flex items-center gap-3 px-4 py-3 text-slate-600 hover:bg-white/30 rounded-xl transition-all hover:text-slate-900">
+                            <span className="material-symbols-outlined">chat_bubble_outline</span>
+                            Mensajes
+                        </button>
+                        <button className="w-full flex items-center gap-3 px-4 py-3 text-slate-600 hover:bg-white/30 rounded-xl transition-all hover:text-slate-900">
+                            <span className="material-symbols-outlined">settings</span>
+                            Configuración
                         </button>
                     </nav>
 
-                    <div className="p-4 mt-auto mb-4">
-                        <div className="bg-gradient-to-b from-[#0c263b]/5 to-transparent rounded-2xl p-5 border border-white/60">
-                            <h4 className={`text-sm font-bold ${textDark} mb-1`}>Soporte Premium</h4>
-                            <p className="text-xs text-gray-500 mb-4 leading-relaxed">¿Necesitas ayuda con tus anuncios?</p>
-                            <button className={`w-full bg-white hover:bg-gray-50 ${textDark} text-xs font-bold py-2.5 px-4 rounded-xl transition-all shadow-sm border border-gray-100`}>
+                    <div className="p-4 mt-auto space-y-4 mb-4">
+                        <div className="bg-gradient-to-br from-blue-50/50 to-indigo-50/50 p-4 rounded-2xl border border-white/40">
+                            <p className="text-xs font-semibold text-slate-500 mb-2">Soporte Premium</p>
+                            <p className="text-sm font-medium text-slate-800 mb-3 leading-snug">¿Necesitas ayuda con tus anuncios?</p>
+                            <button className={`w-full py-2 ${primaryBlue} text-white text-sm font-medium rounded-xl shadow-lg shadow-blue-500/25 hover:bg-blue-700 transition-colors`}>
                                 Contactar
                             </button>
                         </div>
@@ -222,42 +248,80 @@ export default function MisInmueblesPage() {
                 {/* ============================================================ */}
                 {/* MAIN CONTENT */}
                 {/* ============================================================ */}
-                <main className="flex-1 flex flex-col h-full relative overflow-hidden bg-[#F3F4F6]">
+                <main className="flex-1 flex flex-col h-full overflow-hidden relative rounded-3xl">
 
-                    {/* Background Blobs (Sutiles) */}
-                    <div className="absolute top-[-20%] right-[-10%] w-[600px] h-[600px] bg-blue-100/40 rounded-full blur-[100px] pointer-events-none"></div>
-                    <div className="absolute bottom-[-10%] left-[10%] w-[500px] h-[500px] bg-gray-200/40 rounded-full blur-[100px] pointer-events-none"></div>
+                    {/* Blobs de fondo */}
+                    <div className="fixed top-0 left-0 w-full h-full z-[-1] pointer-events-none overflow-hidden">
+                        <div className="absolute top-[-10%] right-[-5%] w-[500px] h-[500px] bg-blue-400/10 rounded-full blur-[80px]"></div>
+                        <div className="absolute bottom-[-10%] left-[20%] w-[400px] h-[400px] bg-purple-400/10 rounded-full blur-[80px]"></div>
+                    </div>
 
                     {/* HEADER */}
-                    <header className="h-24 flex items-center justify-between px-8 z-10 shrink-0">
-                        <div className="flex-1 max-w-md hidden md:block">
-                            <div className="relative group">
-                                <span className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                                    <span className="material-symbols-outlined text-gray-400 text-[20px]">search</span>
-                                </span>
-                                <input
-                                    className="block w-full pl-11 pr-4 py-2.5 border-none rounded-full bg-white/50 backdrop-blur-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#0c263b]/10 shadow-sm transition-all text-sm font-medium"
-                                    placeholder="Buscar propiedades..."
-                                    type="text"
-                                />
-                            </div>
+                    <header className="h-24 flex items-center justify-between px-8 z-10 shrink-0 mb-2">
+                        <div className="relative w-96 group hidden md:block">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 material-symbols-outlined">search</span>
+                            <input
+                                className="w-full bg-white/60 backdrop-blur-md border border-white/40 rounded-full py-2.5 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all placeholder:text-slate-400 text-slate-700 shadow-sm"
+                                placeholder="Buscar propiedades..."
+                                type="text"
+                            />
                         </div>
 
-                        <div className="flex items-center space-x-4 ml-6">
-                            {/* Botón Crear Transparente (Glass) */}
-                            <Link href="/publicar/tipo" className={`group ${btnGlass} px-6 py-2.5 rounded-full flex items-center gap-2 text-sm font-bold`}>
-                                <span className="material-symbols-outlined text-[20px] group-hover:scale-110 transition-transform">add_circle</span>
+                        <div className="flex items-center gap-4 ml-auto">
+                            <Link href="/publicar/tipo" className={`${primaryBlue} hover:bg-blue-700 text-white px-5 py-2.5 rounded-full font-medium shadow-lg shadow-blue-500/30 flex items-center gap-2 transition-transform active:scale-95`}>
+                                <span className="material-symbols-outlined text-lg">add_circle</span>
                                 Crear Propiedad
                             </Link>
-
-                            <div className="w-px h-8 bg-gray-300/50 mx-2"></div>
-
-                            <button className={`relative p-2.5 rounded-full ${btnGlass} !border-transparent !shadow-none hover:!bg-white/60`}>
-                                <span className="material-symbols-outlined text-[22px]">notifications</span>
-                                <span className="absolute top-2.5 right-2.5 w-1.5 h-1.5 bg-red-500 rounded-full"></span>
+                            <button className="p-2 bg-white/60 rounded-full text-slate-600 hover:bg-white transition-colors border border-white/40 shadow-sm relative">
+                                <span className="material-symbols-outlined">notifications</span>
+                                <span className="absolute top-2 right-2.5 w-2 h-2 bg-red-500 rounded-full border border-white"></span>
                             </button>
-                            <div className="h-10 w-10 rounded-full bg-white border border-white/60 shadow-sm flex items-center justify-center overflow-hidden cursor-pointer hover:ring-2 hover:ring-[#0c263b]/10 transition-all">
-                                <span className="material-symbols-outlined text-gray-400">person</span>
+
+                            {/* User Avatar with Dropdown */}
+                            <div className="relative">
+                                <button
+                                    onClick={() => setShowUserMenu(!showUserMenu)}
+                                    className="w-11 h-11 rounded-full bg-white border-2 border-white shadow-md flex items-center justify-center overflow-hidden cursor-pointer hover:border-gray-200 transition-all"
+                                >
+                                    {user?.user_metadata?.avatar_url || user?.user_metadata?.picture ? (
+                                        <img
+                                            src={user.user_metadata.avatar_url || user.user_metadata.picture}
+                                            alt="Profile"
+                                            className="w-full h-full object-cover"
+                                            referrerPolicy="no-referrer"
+                                        />
+                                    ) : (
+                                        <div className="w-full h-full bg-[#2563EB] flex items-center justify-center text-white font-bold text-lg select-none">
+                                            {user?.email?.charAt(0).toUpperCase() || 'U'}
+                                        </div>
+                                    )}
+                                </button>
+
+                                {/* Dropdown Menu */}
+                                {showUserMenu && (
+                                    <>
+                                        {/* Backdrop to close menu */}
+                                        <div
+                                            className="fixed inset-0 z-40"
+                                            onClick={() => setShowUserMenu(false)}
+                                        />
+
+                                        {/* Menu */}
+                                        <div className="absolute right-0 top-12 w-56 bg-white rounded-xl shadow-lg border border-gray-100 py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+                                            <div className="px-4 py-2 border-b border-gray-100">
+                                                <p className="text-sm font-medium text-slate-800 truncate">{user?.email}</p>
+                                                <p className="text-xs text-slate-400">Propietario</p>
+                                            </div>
+                                            <button
+                                                onClick={handleLogout}
+                                                className="w-full flex items-center gap-3 px-4 py-3 text-red-600 hover:bg-red-50 transition-colors text-sm font-medium"
+                                            >
+                                                <span className="material-symbols-outlined text-lg">logout</span>
+                                                Salir del Dashboard
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
                             </div>
                         </div>
                     </header>
@@ -266,86 +330,94 @@ export default function MisInmueblesPage() {
                     <div className="flex-1 overflow-y-auto px-8 pb-8 scrollbar-hide">
 
                         {!hasProperties ? (
-                            /* ============================================================ */
                             /* ZERO STATE */
-                            /* ============================================================ */
-                            <div className="flex flex-col justify-center items-center h-full pb-20">
-                                <div className={`bg-white/40 backdrop-blur-md w-full max-w-4xl rounded-[3rem] p-2 border border-white/60 shadow-xl shadow-[#0c263b]/5`}>
-                                    <div className="bg-gradient-to-b from-white/80 to-white/40 rounded-[2.5rem] p-16 flex flex-col items-center text-center relative overflow-hidden">
-
-                                        <div className="inline-flex items-center justify-center p-4 bg-white rounded-[2rem] mb-6 shadow-sm border border-gray-50">
-                                            <span className={`material-symbols-outlined ${textDark} text-4xl`}>holiday_village</span>
-                                        </div>
-
-                                        <h3 className={`text-4xl font-bold ${textDark} mb-4 tracking-tight`}>Tu portfolio está vacío</h3>
-                                        <p className="text-gray-500 mb-10 font-medium text-lg max-w-md mx-auto leading-relaxed">
-                                            Gestiona alquileres y ventas desde un único lugar. Tu éxito inmobiliario comienza aquí.
-                                        </p>
-
-                                        <div className="flex gap-4">
-                                            <Link href="/publicar/tipo" className={`${btnGlass} !bg-[#0c263b] !text-white hover:!bg-[#0c263b]/90 border-none py-3.5 px-8 rounded-full text-sm font-bold flex items-center gap-2 shadow-lg shadow-[#0c263b]/20`}>
-                                                <span className="material-symbols-outlined text-[20px]">add</span>
-                                                Publicar ahora
-                                            </Link>
-                                            <button className={`${btnGlass} bg-white py-3.5 px-8 rounded-full text-sm font-bold flex items-center gap-2`}>
-                                                <span className="material-symbols-outlined text-[20px]">play_circle</span>
-                                                Ver Tutorial
-                                            </button>
-                                        </div>
-                                    </div>
+                            <div className="flex flex-col justify-center items-center h-[80vh]">
+                                <div className="text-center mb-10">
+                                    <h2 className="text-3xl font-bold text-slate-900 mb-2">Bienvenido a tu Panel de Gestión</h2>
+                                    <p className="text-slate-500 text-lg">Comienza tu viaje inmobiliario publicando tu primera propiedad.</p>
+                                </div>
+                                <div className="bg-white/40 backdrop-blur-md border border-white/50 p-12 rounded-[2rem] shadow-glass text-center max-w-4xl w-full">
+                                    <span className="material-symbols-outlined text-6xl text-blue-200 mb-4">holiday_village</span>
+                                    <h3 className="text-2xl font-bold text-slate-900 mb-4">Tu portfolio está vacío</h3>
+                                    <Link href="/publicar/tipo" className={`${primaryBlue} text-white px-8 py-3 rounded-full font-bold shadow-lg shadow-blue-500/25 inline-flex items-center gap-2 hover:translate-y-[-2px] transition-transform`}>
+                                        <span className="material-symbols-outlined">add_circle</span> Publicar Inmueble
+                                    </Link>
                                 </div>
                             </div>
-
                         ) : (
-                            /* ============================================================ */
                             /* GRID STATE */
-                            /* ============================================================ */
                             <div className="w-full max-w-[1600px] mx-auto">
 
-                                {/* Title & Download */}
-                                <div className="flex justify-between items-end mb-8">
-                                    <div>
-                                        <h2 className={`text-3xl font-bold ${textDark} tracking-tight`}>Panel de Gestión</h2>
-                                        <p className="text-gray-500 mt-1 font-medium text-sm">Bienvenido, gestiona tus {totalProps} propiedades.</p>
+                                {/* Title & Stats */}
+                                <div className="mb-8">
+                                    <div className="flex justify-between items-end mb-6">
+                                        <div>
+                                            <h2 className="text-3xl font-bold text-slate-900 tracking-tight">Panel de Gestión</h2>
+                                            <p className="text-slate-500 mt-1">Bienvenido de nuevo, gestiona tus {totalProps} propiedades activas.</p>
+                                        </div>
+                                        <button className="flex items-center gap-2 px-4 py-2 bg-white/50 hover:bg-white border border-white/40 rounded-xl text-sm font-medium text-slate-700 transition-all shadow-sm">
+                                            <span className="material-symbols-outlined text-base">download</span>
+                                            Descargar Reporte
+                                        </button>
                                     </div>
-                                    <button className={`${btnGlass} px-5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 bg-white`}>
-                                        <span className="material-symbols-outlined text-[18px]">download</span>
-                                        Reporte
-                                    </button>
-                                </div>
 
-                                {/* Stats Cards (Transparent Glass) */}
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 mb-10">
-                                    {[
-                                        { label: 'Total Propiedades', val: totalProps, icon: 'home' },
-                                        { label: 'Publicadas', val: publishedProps, icon: 'campaign' },
-                                        { label: 'En Revisión', val: inReviewProps, icon: 'hourglass_top' },
-                                        { label: 'Borradores', val: draftProps, icon: 'edit_note' }
-                                    ].map((stat, i) => (
-                                        <div key={i} className={`${panelGlass} p-6 rounded-[2rem] hover:transform hover:-translate-y-1 transition-all duration-300`}>
-                                            <div className="flex justify-between items-start mb-4">
-                                                <p className="text-gray-500 text-xs font-bold uppercase tracking-wider">{stat.label}</p>
-                                                <span className={`p-2 bg-[#0c263b]/5 text-[#0c263b] rounded-xl`}>
-                                                    <span className="material-symbols-outlined text-[20px]">{stat.icon}</span>
+                                    {/* Stats Cards */}
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                                        <div className="bg-white/65 backdrop-blur-md p-6 rounded-2xl border border-white/50 shadow-glass hover:shadow-lg transition-all duration-300 group">
+                                            <div className="flex justify-between items-start mb-2">
+                                                <p className="text-slate-500 text-sm font-medium">Total Propiedades</p>
+                                                <span className="p-1.5 bg-blue-100 text-blue-600 rounded-lg group-hover:scale-110 transition-transform">
+                                                    <span className="material-symbols-outlined text-sm">home</span>
                                                 </span>
                                             </div>
-                                            <h3 className={`text-4xl font-bold ${textDark}`}>{stat.val}</h3>
+                                            <div className="flex items-baseline gap-3">
+                                                <h3 className="text-4xl font-bold text-slate-800">{totalProps}</h3>
+                                                <span className="flex items-center text-emerald-500 text-sm font-semibold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+                                                    <span className="material-symbols-outlined text-base mr-0.5">trending_up</span> +2%
+                                                </span>
+                                            </div>
                                         </div>
-                                    ))}
+                                        <div className="bg-white/65 backdrop-blur-md p-6 rounded-2xl border border-white/50 shadow-glass hover:shadow-lg transition-all duration-300 group">
+                                            <div className="flex justify-between items-start mb-2">
+                                                <p className="text-slate-500 text-sm font-medium">Anuncios Publicados</p>
+                                                <span className="p-1.5 bg-purple-100 text-purple-600 rounded-lg group-hover:scale-110 transition-transform">
+                                                    <span className="material-symbols-outlined text-sm">campaign</span>
+                                                </span>
+                                            </div>
+                                            <div className="flex items-baseline gap-3">
+                                                <h3 className="text-4xl font-bold text-slate-800">{publishedProps}</h3>
+                                                <span className="flex items-center text-emerald-500 text-sm font-semibold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+                                                    <span className="material-symbols-outlined text-base mr-0.5">trending_up</span> +5%
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div className="bg-white/65 backdrop-blur-md p-6 rounded-2xl border border-white/50 shadow-glass hover:shadow-lg transition-all duration-300 group">
+                                            <div className="flex justify-between items-start mb-2">
+                                                <p className="text-slate-500 text-sm font-medium">Visualizaciones Totales</p>
+                                                <span className="p-1.5 bg-orange-100 text-orange-600 rounded-lg group-hover:scale-110 transition-transform">
+                                                    <span className="material-symbols-outlined text-sm">visibility</span>
+                                                </span>
+                                            </div>
+                                            <div className="flex items-baseline gap-3">
+                                                <h3 className="text-4xl font-bold text-slate-800">45.2k</h3>
+                                                <span className="flex items-center text-emerald-500 text-sm font-semibold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+                                                    <span className="material-symbols-outlined text-base mr-0.5">trending_up</span> +12%
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
 
-                                {/* Filter Tabs (Glass Pills) */}
-                                <div className="flex gap-4 mb-8 overflow-x-auto pb-2">
+                                {/* Filter Tabs */}
+                                <div className="flex gap-6 border-b border-slate-200 mb-6">
                                     {tabLabels.map((tab, i) => (
                                         <button
                                             key={tab}
                                             onClick={() => setActiveTab(i)}
-                                            className={`
-                                                px-6 py-2.5 rounded-full text-sm font-bold transition-all whitespace-nowrap
-                                                ${activeTab === i
-                                                    ? 'bg-[#0c263b] text-white shadow-lg shadow-[#0c263b]/20'
-                                                    : 'bg-white/50 text-gray-500 hover:bg-white hover:text-[#0c263b] border border-white/50'}
-                                            `}
+                                            className={`pb-3 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === i
+                                                ? 'border-[#2563EB] text-[#2563EB]'
+                                                : 'border-transparent text-slate-500 hover:text-slate-800'
+                                                }`}
                                         >
                                             {tab}
                                         </button>
@@ -354,68 +426,69 @@ export default function MisInmueblesPage() {
 
                                 {/* Empty Filter State */}
                                 {filteredProperties.length === 0 ? (
-                                    <div className={`${panelGlass} rounded-3xl p-12 text-center`}>
-                                        <span className="material-symbols-outlined text-5xl text-gray-300 mb-4">search_off</span>
-                                        <p className="text-gray-500 font-medium">No hay propiedades en esta categoría</p>
+                                    <div className="bg-white/65 backdrop-blur-md rounded-2xl p-12 text-center border border-white/50 shadow-glass">
+                                        <span className="material-symbols-outlined text-5xl text-slate-300 mb-4">search_off</span>
+                                        <p className="text-slate-500 font-medium">No hay propiedades en esta categoría</p>
                                     </div>
                                 ) : (
-                                    /* PROPERTY CARDS (EDGE-TO-EDGE) */
-                                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8 pb-20">
+                                    /* PROPERTY CARDS GRID */
+                                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 pb-20">
                                         {filteredProperties.map((prop) => {
                                             const isDraft = prop.estado === 'borrador';
                                             const isPublished = prop.estado === 'publicado';
                                             const isInReview = prop.estado === 'en_revision' || prop.estado === 'pendiente_verificacion';
                                             const editLink = getEditLink(prop);
+                                            const hasStep1 = prop.barrio && prop.direccion;
+                                            const progress = hasStep1 ? 65 : 30;
 
                                             return (
-                                                <div key={prop.id} className={`${panelGlass} rounded-[2rem] overflow-hidden group flex flex-col hover:shadow-xl transition-all duration-500 hover:-translate-y-1`}>
+                                                <div key={prop.id} className="bg-white/65 backdrop-blur-md rounded-[1.5rem] overflow-hidden border border-white/60 shadow-[0_4px_30px_rgba(0,0,0,0.1)] flex flex-col group hover:-translate-y-2 hover:shadow-2xl transition-all duration-300 ease-in-out">
 
-                                                    {/* Imagen Edge-to-Edge (Sin Padding) */}
-                                                    <div className="relative h-64 w-full bg-gray-100 overflow-hidden">
+                                                    {/* Image */}
+                                                    <div className="relative h-56 overflow-hidden">
                                                         {prop.imagen_principal ? (
                                                             <img
                                                                 src={prop.imagen_principal}
                                                                 alt={prop.titulo || 'Propiedad'}
-                                                                className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                                                                className={`w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 ${isDraft ? 'grayscale' : ''}`}
                                                             />
                                                         ) : (
-                                                            <div className="w-full h-full flex items-center justify-center text-gray-300 bg-gradient-to-br from-gray-50 to-gray-100">
-                                                                <span className="material-symbols-outlined text-6xl opacity-50">home</span>
+                                                            <div className="w-full h-full bg-gray-100 flex items-center justify-center text-gray-300">
+                                                                <span className="material-symbols-outlined text-5xl">image</span>
                                                             </div>
                                                         )}
 
-                                                        {/* Badges Pequeños (-20% tamaño) */}
-                                                        <div className="absolute top-4 left-4 flex flex-col gap-2">
+                                                        {/* Badges */}
+                                                        <div className="absolute top-4 left-4">
                                                             {isPublished && (
-                                                                <span className="bg-emerald-500 text-white text-[9px] font-bold px-2.5 py-1 rounded-full shadow-sm uppercase tracking-wide">
-                                                                    Publicado
-                                                                </span>
-                                                            )}
-                                                            {isDraft && (
-                                                                <span className="bg-gray-600 text-white text-[9px] font-bold px-2.5 py-1 rounded-full shadow-sm uppercase tracking-wide">
-                                                                    Borrador
+                                                                <span className="bg-emerald-500 text-white text-[9px] font-bold px-3 py-1.5 rounded-full shadow-md flex items-center gap-1.5 uppercase tracking-wide">
+                                                                    <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse"></span> PUBLICADO
                                                                 </span>
                                                             )}
                                                             {isInReview && (
-                                                                <span className="bg-amber-500 text-white text-[9px] font-bold px-2.5 py-1 rounded-full shadow-sm uppercase tracking-wide">
-                                                                    En Revisión
+                                                                <span className="bg-amber-500 text-white text-[9px] font-bold px-3 py-1.5 rounded-full shadow-md flex items-center gap-1.5 uppercase tracking-wide">
+                                                                    <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse"></span> EN REVISIÓN
+                                                                </span>
+                                                            )}
+                                                            {isDraft && (
+                                                                <span className="bg-slate-500 text-white text-[9px] font-bold px-3 py-1.5 rounded-full shadow-md flex items-center gap-1.5 uppercase tracking-wide">
+                                                                    BORRADOR
                                                                 </span>
                                                             )}
                                                         </div>
 
-                                                        {/* Botón Favorito Flotante */}
-                                                        <button className="absolute top-4 right-4 w-8 h-8 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white hover:bg-white hover:text-red-500 transition-all">
-                                                            <span className="material-symbols-outlined text-[16px]">favorite</span>
+                                                        <button className="absolute top-4 right-4 w-8 h-8 rounded-full bg-white/30 backdrop-blur-md border border-white/40 flex items-center justify-center text-white hover:bg-white hover:text-red-500 transition-colors">
+                                                            <span className="material-symbols-outlined text-sm">favorite</span>
                                                         </button>
                                                     </div>
 
                                                     {/* Content */}
-                                                    <div className="p-6 flex-1 flex flex-col">
+                                                    <div className="p-5 flex-1 flex flex-col">
                                                         <div className="flex justify-between items-start mb-2">
-                                                            <h3 className={`font-bold text-lg ${textDark} leading-tight line-clamp-1 pr-4`}>
+                                                            <h3 className="font-bold text-lg text-slate-800 leading-tight line-clamp-1">
                                                                 {prop.titulo || prop.tipo_inmueble || "Sin Título"}
                                                             </h3>
-                                                            <span className="text-gray-400 text-xs italic whitespace-nowrap">
+                                                            <span className={`font-bold ${isPublished || isInReview ? 'text-[#2563EB]' : 'text-slate-400'} text-lg`}>
                                                                 {prop.precio
                                                                     ? new Intl.NumberFormat('es-CO', {
                                                                         style: 'currency',
@@ -428,60 +501,81 @@ export default function MisInmueblesPage() {
                                                             </span>
                                                         </div>
 
-                                                        <div className="flex items-center text-gray-400 text-xs font-medium mb-6">
-                                                            <span className="material-symbols-outlined text-[14px] mr-1">location_on</span>
+                                                        <div className="flex items-center text-slate-500 text-xs mb-4">
+                                                            <span className="material-symbols-outlined text-sm mr-1">location_on</span>
                                                             {prop.barrio || prop.ciudad || prop.direccion || "Ubicación pendiente"}
                                                         </div>
 
-                                                        {isDraft && (
-                                                            <div className="mb-6">
-                                                                <div className="flex justify-between text-[9px] font-bold text-gray-400 mb-1 uppercase tracking-wider">
-                                                                    <span>Perfil Completo</span>
-                                                                    <span>{prop.barrio && prop.direccion ? '65%' : '30%'}</span>
+                                                        {/* PUBLISHED: Stats */}
+                                                        {isPublished && (
+                                                            <div className="grid grid-cols-2 gap-4 mb-5 p-3 rounded-2xl bg-white/40 border border-white/30">
+                                                                <div>
+                                                                    <p className="text-[10px] uppercase text-slate-400 font-semibold">Vistas</p>
+                                                                    <p className="font-bold text-slate-700">1,240</p>
                                                                 </div>
-                                                                <div className="h-1 w-full bg-gray-100 rounded-full overflow-hidden">
+                                                                <div>
+                                                                    <p className="text-[10px] uppercase text-slate-400 font-semibold">Leads</p>
+                                                                    <p className="font-bold text-slate-700">14 Interesados</p>
+                                                                </div>
+                                                            </div>
+                                                        )}
+
+                                                        {/* IN REVIEW: Warning Box */}
+                                                        {isInReview && (
+                                                            <div className="mb-5 p-3 rounded-2xl bg-amber-50/50 border border-amber-100">
+                                                                <p className="text-xs text-amber-800 leading-relaxed">
+                                                                    Tu anuncio está siendo revisado por nuestro equipo de calidad. Estará activo en menos de 24h.
+                                                                </p>
+                                                            </div>
+                                                        )}
+
+                                                        {/* DRAFT: Progress Bar */}
+                                                        {isDraft && (
+                                                            <div className="mb-5">
+                                                                <div className="flex justify-between text-[10px] font-bold text-slate-500 mb-1">
+                                                                    <span>PERFIL COMPLETO AL {progress}%</span>
+                                                                </div>
+                                                                <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
                                                                     <div
-                                                                        className="h-full bg-[#0c263b] rounded-full"
-                                                                        style={{ width: prop.barrio && prop.direccion ? '65%' : '30%' }}
+                                                                        className={`h-full ${primaryBlue} rounded-full`}
+                                                                        style={{ width: `${progress}%` }}
                                                                     ></div>
                                                                 </div>
                                                             </div>
                                                         )}
 
-                                                        {!isDraft && (
-                                                            <div className="mb-6 p-3 bg-[#F8FAFC] rounded-xl border border-gray-100">
-                                                                <p className="text-[10px] text-amber-600 leading-snug">
-                                                                    {isInReview
-                                                                        ? "Tu anuncio está siendo revisado por nuestro equipo de calidad."
-                                                                        : "Tu anuncio está activo y visible para los inquilinos."}
-                                                                </p>
-                                                            </div>
-                                                        )}
-
-                                                        {/* Actions: Botones Glass */}
+                                                        {/* ACTIONS */}
                                                         <div className="mt-auto flex gap-3">
-                                                            <Link
-                                                                href={isDraft ? editLink : `/inmueble/${prop.id}`}
-                                                                className={`flex-1 ${btnGlass} bg-[#0c263b] text-white hover:bg-[#0c263b]/90 py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 border-none shadow-md shadow-blue-900/10`}
-                                                            >
-                                                                <span className="material-symbols-outlined text-[16px]">{isDraft ? 'edit' : 'visibility'}</span>
-                                                                {isDraft ? 'Editar Borrador' : 'Ver Anuncio'}
-                                                            </Link>
+                                                            {isInReview ? (
+                                                                <button className="flex-1 py-2.5 rounded-full bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-bold transition-all flex justify-center items-center gap-2">
+                                                                    Cancelar Envío
+                                                                </button>
+                                                            ) : (
+                                                                <Link
+                                                                    href={isDraft ? editLink : `/inmueble/${prop.id}`}
+                                                                    className={`flex-1 py-2.5 rounded-full ${primaryBlue} hover:bg-blue-600 text-white text-sm font-medium shadow-lg shadow-blue-500/20 transition-all flex justify-center items-center gap-2`}
+                                                                >
+                                                                    {isDraft ? (
+                                                                        <> <span className="material-symbols-outlined text-sm">edit</span> Editar Borrador </>
+                                                                    ) : (
+                                                                        'Ver Anuncio'
+                                                                    )}
+                                                                </Link>
+                                                            )}
 
-                                                            {isDraft && (
+                                                            {isDraft ? (
                                                                 <button
                                                                     onClick={() => handleDelete(prop.id)}
                                                                     disabled={isDeleting === prop.id}
-                                                                    className="w-10 h-10 flex items-center justify-center rounded-xl bg-white border border-gray-100 text-red-400 hover:text-red-500 hover:border-red-100 transition-colors shadow-sm disabled:opacity-50"
+                                                                    className="w-10 flex items-center justify-center rounded-full border border-red-200 text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
                                                                 >
-                                                                    <span className="material-symbols-outlined text-[18px]">
+                                                                    <span className="material-symbols-outlined text-[8px]">
                                                                         {isDeleting === prop.id ? 'progress_activity' : 'delete'}
                                                                     </span>
                                                                 </button>
-                                                            )}
-                                                            {!isDraft && (
-                                                                <button className="w-10 h-10 flex items-center justify-center rounded-xl bg-white border border-gray-100 text-gray-400 hover:text-[#0c263b] hover:border-gray-200 transition-colors shadow-sm">
-                                                                    <span className="material-symbols-outlined text-[18px]">more_horiz</span>
+                                                            ) : (
+                                                                <button className="w-10 flex items-center justify-center rounded-full border border-slate-300 text-slate-500 hover:bg-white transition-colors">
+                                                                    <span className="material-symbols-outlined text-[8px]">more_horiz</span>
                                                                 </button>
                                                             )}
                                                         </div>
