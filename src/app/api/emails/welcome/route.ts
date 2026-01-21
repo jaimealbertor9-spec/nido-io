@@ -1,47 +1,52 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { resend } from '@/lib/resend';
-import { WelcomeEmail } from '@/components/emails/WelcomeEmail';
+import { NextResponse } from 'next/server';
+import { Resend } from 'resend';
 
-export async function POST(request: NextRequest) {
+// Forzamos que sea dinámica para evitar caché raro de Next.js
+export const dynamic = 'force-dynamic';
+
+export async function POST(request: Request) {
+    console.log("📨 [DEBUG] Iniciando API de Bienvenida...");
+
     try {
-        const body = await request.json();
-        const { email, name } = body;
-
-        if (!email) {
-            return NextResponse.json(
-                { success: false, error: 'Email is required' },
-                { status: 400 }
-            );
+        // 1. Diagnóstico de la Llave
+        const apiKey = process.env.RESEND_API_KEY;
+        if (!apiKey) {
+            console.error("❌ [DEBUG] FATAL: No existe RESEND_API_KEY en las variables de entorno.");
+            return NextResponse.json({ error: 'Missing API Key' }, { status: 500 });
         }
+        console.log(`🔑 [DEBUG] API Key detectada: ${apiKey.substring(0, 4)}...`);
 
-        const nombre = name || 'Usuario';
+        // 2. Leer datos del usuario
+        const { email, name } = await request.json();
+        console.log(`👤 [DEBUG] Enviando a: ${email} | Nombre: ${name}`);
 
+        // 3. Inicializar Cliente
+        const resend = new Resend(apiKey);
+
+        // 4. Intento de Envío (HTML Simple para prueba)
         const { data, error } = await resend.emails.send({
-            from: 'Nido <onboarding@resend.dev>',
-            to: email,
-            subject: '¡Bienvenido a Nido! 🏡',
-            react: WelcomeEmail({ nombre }),
+            from: 'onboarding@resend.dev', // El único remitente permitido en Sandbox
+            to: email, // TIENE que ser el mismo email de tu cuenta de Resend
+            subject: '¡Bienvenido a Nido! (Prueba de Diagnóstico)',
+            html: `
+        <div style="font-family: sans-serif; padding: 20px;">
+          <h1>👋 Hola ${name}, bienvenido a Nido</h1>
+          <p>Si estás leyendo esto, ¡LA CONEXIÓN CON RESEND FUNCIONA!</p>
+          <p>Ya puedes estar tranquilo de que el sistema envía correos.</p>
+        </div>
+      `,
         });
 
         if (error) {
-            console.error('[WELCOME EMAIL] ❌ Failed to send:', error);
-            return NextResponse.json(
-                { success: false, error: error.message },
-                { status: 500 }
-            );
+            console.error("❌ [DEBUG] Error devuelto por Resend:", error);
+            return NextResponse.json({ error }, { status: 400 });
         }
 
-        console.log('[WELCOME EMAIL] ✅ Sent successfully:', data?.id);
-        return NextResponse.json({
-            success: true,
-            messageId: data?.id,
-        });
+        console.log("✅ [DEBUG] Correo enviado con éxito. ID:", data?.id);
+        return NextResponse.json({ success: true, id: data?.id });
 
     } catch (error: any) {
-        console.error('[WELCOME EMAIL] 💥 Unexpected error:', error.message);
-        return NextResponse.json(
-            { success: false, error: error.message },
-            { status: 500 }
-        );
+        console.error("💥 [DEBUG] Error Crítico en el servidor:", error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
