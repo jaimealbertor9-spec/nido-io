@@ -58,21 +58,6 @@ export default function RegisterPage() {
 
             console.log("✅ Usuario Auth creado:", authData.user.id);
 
-            // Send welcome email (with keepalive to ensure delivery before redirect)
-            try {
-                await fetch('/api/emails/welcome', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        email: email.trim(),
-                        name: name.trim()
-                    }),
-                    keepalive: true, // Ensures request completes even if page navigates
-                });
-                console.log("📧 Welcome email request sent");
-            } catch (emailErr) {
-                console.error("⚠️ Welcome email failed:", emailErr);
-            }
 
             // 2. Insert into usuarios table with intent-based tipo_usuario
             const { error: dbError } = await supabase
@@ -91,6 +76,24 @@ export default function RegisterPage() {
             } else {
                 console.log("✅ Usuario insertado en DB con tipo_usuario:", intent || 'NULL');
             }
+
+            // Send welcome email (with keepalive to ensure delivery before redirect)
+            try {
+                console.log("📧 Intentando enviar correo de bienvenida...");
+                await fetch('/api/emails/welcome', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email: email.trim(),
+                        name: name.trim()
+                    }),
+                    keepalive: true, // ¡CRUCIAL para que no se corte al redirigir!
+                });
+                console.log("📧 Petición de correo enviada.");
+            } catch (emailErr) {
+                console.error("⚠️ Falló el envío del correo de bienvenida:", emailErr);
+            }
+
 
             // 3. Smart redirect based on intent AND type
             // If user has a property type, create draft and go to wizard

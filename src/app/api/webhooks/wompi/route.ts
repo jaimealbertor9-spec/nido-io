@@ -291,6 +291,42 @@ async function updateInmueble(supabase: any, inmuebleId: string, pagoId: string 
     console.error('[WOMPI WEBHOOK] ❌ Failed to update inmueble:', inmuebleError);
   } else {
     console.log('[WOMPI WEBHOOK] ✅ Inmueble updated to en_revision with 30-day expiration');
+
+    // Send payment confirmation email
+    try {
+      // 1. Get property details for the email
+      const { data: propiedad } = await supabase
+        .from('inmuebles')
+        .select('titulo, ciudad, precio, propietario_id')
+        .eq('id', inmuebleId)
+        .single();
+
+      if (propiedad?.propietario_id) {
+        // 2. Get user email and name
+        const { data: usuario } = await supabase
+          .from('usuarios')
+          .select('email, nombre')
+          .eq('id', propiedad.propietario_id)
+          .single();
+
+        if (usuario?.email) {
+          await resend.emails.send({
+            from: 'Nido <onboarding@resend.dev>',
+            to: usuario.email,
+            subject: '¡Pago Recibido! Tu inmueble está en revisión 🏡',
+            react: PaymentSuccessEmail({
+              nombre: usuario.nombre || 'Usuario',
+              propertyName: propiedad.titulo,
+              propertyLocation: propiedad.ciudad,
+              propertyPrice: propiedad.precio
+            }),
+          });
+          console.log('[WOMPI WEBHOOK] 📧 Email de confirmación enviado a:', usuario.email);
+        }
+      }
+    } catch (emailError: any) {
+      console.error('[WOMPI WEBHOOK] ⚠️ Falló el envío del email de pago:', emailError.message);
+    }
   }
 }
 
