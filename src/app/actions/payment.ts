@@ -36,24 +36,43 @@ export async function initiatePaymentSession(
     userId: string,
     customRedirectUrl?: string
 ) {
-    console.log('🚀 [Payment] Iniciando sesión para:', userId);
-    console.log('🌐 [Payment] Base URL:', getBaseUrl());
-    console.log('🔧 [Payment] NODE_ENV:', process.env.NODE_ENV);
-    console.log('📡 [Payment] Using Wompi API:', WOMPI_API_BASE);
-
-    // 1. Initialize Supabase client
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-
-    console.log('🔑 [Payment] SUPABASE_SERVICE_ROLE_KEY defined:', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
-
-    if (!supabaseUrl || !supabaseServiceKey) {
-        return { success: false, error: 'Error de configuración del servidor' };
-    }
-
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
     try {
+        // ========================================
+        // CRITICAL: Validate environment variables FIRST
+        // ========================================
+        const privateKey = process.env.WOMPI_PRIVATE_KEY;
+        if (!privateKey) {
+            console.error("❌ CRITICAL: WOMPI_PRIVATE_KEY is missing in server environment.");
+            console.error("❌ Check Vercel Environment Variables configuration.");
+            throw new Error("La configuración del servidor está incompleta (Falta Llave Wompi).");
+        }
+
+        const publicKey = process.env.NEXT_PUBLIC_WOMPI_PUBLIC_KEY || process.env.WOMPI_PUBLIC_KEY;
+        if (!publicKey) {
+            console.error("❌ CRITICAL: WOMPI_PUBLIC_KEY is missing in server environment.");
+            throw new Error("La configuración del servidor está incompleta (Falta Llave Pública Wompi).");
+        }
+
+        const integritySecret = process.env.WOMPI_INTEGRITY_SECRET || process.env.NEXT_PUBLIC_WOMPI_INTEGRITY_SECRET;
+
+        console.log('🚀 [Payment] Iniciando sesión para:', userId);
+        console.log('🌐 [Payment] Base URL:', getBaseUrl());
+        console.log('🔧 [Payment] NODE_ENV:', process.env.NODE_ENV);
+        console.log('✅ [Payment] WOMPI_PRIVATE_KEY: PRESENT (starts with:', privateKey.substring(0, 12) + '...)');
+        console.log('✅ [Payment] WOMPI_PUBLIC_KEY: PRESENT');
+
+        // 1. Initialize Supabase client
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+        const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+
+        console.log('🔑 [Payment] SUPABASE_SERVICE_ROLE_KEY defined:', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
+
+        if (!supabaseUrl || !supabaseServiceKey) {
+            console.error("❌ CRITICAL: Supabase configuration is missing.");
+            throw new Error("La configuración del servidor está incompleta (Falta Config Supabase).");
+        }
+
+        const supabase = createClient(supabaseUrl, supabaseServiceKey);
         // 2. Fetch property and user data for customer info
         console.log('📋 [Payment] Fetching property data...');
         const { data: propertyData, error: propertyError } = await supabase
@@ -99,21 +118,8 @@ export async function initiatePaymentSession(
             return { success: false, error: 'Debes subir tu documento de identidad antes de pagar.' };
         }
 
-        // 4. Get Wompi credentials
-        const publicKey = process.env.NEXT_PUBLIC_WOMPI_PUBLIC_KEY || process.env.WOMPI_PUBLIC_KEY;
-        const privateKey = process.env.WOMPI_PRIVATE_KEY;
-        const integritySecret = process.env.WOMPI_INTEGRITY_SECRET || process.env.NEXT_PUBLIC_WOMPI_INTEGRITY_SECRET;
-
-        if (!publicKey) {
-            console.error('❌ [Payment] Missing WOMPI_PUBLIC_KEY');
-            throw new Error('Configuration Error: WOMPI_PUBLIC_KEY is missing');
-        }
-        if (!privateKey) {
-            console.error('❌ [Payment] Missing WOMPI_PRIVATE_KEY');
-            throw new Error('Configuration Error: WOMPI_PRIVATE_KEY is missing');
-        }
-
-        console.log('✅ [Payment] Wompi configuration validated');
+        // 4. Wompi credentials are already validated at function entry
+        // Using privateKey, publicKey, integritySecret from the top
 
         const reference = generateReference(propertyId);
         const amountInCentsInt = Math.round(Number(AMOUNT_IN_CENTS));
@@ -205,7 +211,11 @@ export async function initiatePaymentSession(
         };
 
     } catch (error: any) {
-        console.error('💥 [Payment] Error:', error.message);
-        return { success: false, error: error.message || 'Error inesperado al procesar pago' };
+        console.error('💥 Server Action Failed:', error);
+        console.error('💥 Error Name:', error?.name);
+        console.error('💥 Error Message:', error?.message);
+        console.error('💥 Error Stack:', error?.stack);
+        // Return a structured error object that the client can read
+        return { success: false, error: error.message || 'Error interno del servidor' };
     }
 }
