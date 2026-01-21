@@ -101,18 +101,58 @@ export async function POST(request: Request): Promise<Response> {
 
     if (pagoError || !pago) {
       console.error('[WOMPI WEBHOOK] ❌ Payment not found or update failed:', pagoError);
-      // Try to insert if update failed (payment might not exist)
-      console.log('[WOMPI WEBHOOK] Attempting to find inmueble from reference...');
+      console.log('[WOMPI WEBHOOK] Attempting to find inmueble from redirect_url or reference...');
 
-      // Extract short ID from reference: NIDO-XXXXXXXX-TIMESTAMP
-      const parts = reference.split('-');
-      if (parts.length >= 2) {
-        const shortId = parts[1];
+      // ═══════════════════════════════════════════════════════════════════
+      // NEW: Extract property ID from redirect_url (draftId passthrough)
+      // This handles Wompi Payment Links with opaque references (test_...)
+      // ═══════════════════════════════════════════════════════════════════
+      let propertyId: string | null = null;
+      const redirectUrl = transaction.redirect_url;
 
+      // PRIORITY 1: Try to extract draftId from redirect_url
+      if (redirectUrl && redirectUrl.includes('draftId=')) {
+        console.log('[WOMPI WEBHOOK] 📋 Checking redirect_url for draftId:', redirectUrl);
+        try {
+          const urlObj = new URL(redirectUrl);
+          propertyId = urlObj.searchParams.get('draftId');
+        } catch (e) {
+          // Fallback to regex if URL parsing fails
+          const match = redirectUrl.match(/draftId=([a-f0-9-]+)/i);
+          if (match) propertyId = match[1];
+        }
+        if (propertyId) {
+          console.log('[WOMPI WEBHOOK] ✅ Extracted propertyId from redirect_url:', propertyId);
+        }
+      }
+
+      // PRIORITY 2: Fallback to parsing reference (NIDO-XXXXXXXX-TIMESTAMP format)
+      if (!propertyId) {
+        const parts = reference.split('-');
+        if (parts.length >= 2 && parts[0] === 'NIDO') {
+          const shortId = parts[1];
+          console.log('[WOMPI WEBHOOK] 🔍 Trying to match property from reference shortId:', shortId);
+
+          const { data: matchedInmueble } = await supabase
+            .from('inmuebles')
+            .select('id')
+            .ilike('id', `${shortId}%`)
+            .limit(1)
+            .single();
+
+          if (matchedInmueble) {
+            propertyId = matchedInmueble.id;
+            console.log('[WOMPI WEBHOOK] ✅ Found property via reference parsing:', propertyId);
+          }
+        }
+      }
+
+      // If we found a property, create the payment and update
+      if (propertyId) {
         const { data: inmueble } = await supabase
           .from('inmuebles')
           .select('id, propietario_id')
-          .ilike('id', `${shortId}%`)
+          .eq('id', propertyId)
           .single();
 
         if (inmueble) {
@@ -126,7 +166,7 @@ export async function POST(request: Request): Promise<Response> {
               estado: 'aprobado',
               inmueble_id: inmueble.id,
               usuario_id: inmueble.propietario_id,
-              metodo_pago: 'wompi_redirect',
+              metodo_pago: 'wompi_link',
               respuesta_pasarela: evento
             })
             .select('id, inmueble_id')
@@ -137,13 +177,24 @@ export async function POST(request: Request): Promise<Response> {
             return Response.json({ success: false, error: 'Failed to record payment' });
           }
 
+          console.log('[WOMPI WEBHOOK] ✅ Payment created:', newPago?.id);
+
           // Continue with inmueble update using the new payment
           await updateInmueble(supabase, inmueble.id, newPago?.id);
-          return Response.json({ success: true, message: 'Payment created and inmueble updated' });
+          return Response.json({
+            success: true,
+            message: 'Payment created and inmueble updated via draftId passthrough',
+            propertyId: inmueble.id
+          });
         }
       }
 
-      return Response.json({ success: false, error: 'Payment reference not found' });
+      console.error('[WOMPI WEBHOOK] ❌ Could not determine property ID from redirect_url or reference');
+      return Response.json({
+        success: false,
+        error: 'Payment reference not found',
+        debug: { reference, redirectUrl: redirectUrl || 'not provided' }
+      });
     }
 
     console.log('[WOMPI WEBHOOK] ✅ Payment updated:', pago.id);

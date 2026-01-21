@@ -59,8 +59,7 @@ export default function TipoInmueblePage() {
     };
 
     /**
-     * SMART RESUME WORKFLOW - Triggered only on button click
-     * Now uses AuthProvider's user state instead of getSession()
+     * SIMPLIFIED WORKFLOW - Let server action handle draft logic
      */
     const handleContinue = async () => {
         if (!selectedType) return;
@@ -68,79 +67,41 @@ export default function TipoInmueblePage() {
         setError(null);
         setIsProcessing(true);
 
-        let shouldResetLoading = true;
-
         try {
-            // ═══════════════════════════════════════════════════════════════
-            // STEP 1: Check auth from AuthProvider (no timeout needed!)
-            // ═══════════════════════════════════════════════════════════════
-            console.log('🔍 [Tipo] Checking authentication via AuthProvider...');
+            console.log('🔍 [Tipo] Checking authentication...');
 
-            // Wait for AuthProvider to finish loading if it's still initializing
+            // Wait for auth if loading
             if (authLoading) {
-                console.log('⏳ [Tipo] Waiting for AuthProvider...');
                 await new Promise(resolve => setTimeout(resolve, 500));
             }
 
-            // ═══════════════════════════════════════════════════════════════
-            // GUEST USER: Redirect to auth page with type parameter
-            // ═══════════════════════════════════════════════════════════════
             if (!user) {
-                console.log(`🔄 [Tipo] Guest user → Redirecting to auth with type=${selectedType}`);
-                shouldResetLoading = false;
+                console.log(`🔄 [Tipo] Guest -> Redirecting to auth`);
                 router.push(`/publicar/auth?intent=${intent}&type=${selectedType}`);
                 return;
             }
 
             const userId = user.id;
-            console.log(`✅ [Tipo] Authenticated user from AuthProvider: ${user.email}`);
+            console.log(`✅ [Tipo] User authenticated: ${user.email}`);
+            console.log(`🆕 [Tipo] Requesting draft for type: ${selectedType}`);
 
-            // ═══════════════════════════════════════════════════════════════
-            // STEP 2: Check for existing draft (SINGLE DRAFT RULE)
-            // ═══════════════════════════════════════════════════════════════
-            console.log('🔍 [Tipo] Checking for existing drafts...');
+            // DIRECTLY call the Server Action. 
+            // It handles checking for existing drafts of THIS specific type internally.
+            const draftId = await createPropertyDraft(selectedType, userId);
 
-            const { data: existingDraft, error: draftError } = await supabase
-                .from('inmuebles')
-                .select('id')
-                .eq('propietario_id', userId)
-                .eq('estado', 'borrador')
-                .order('created_at', { ascending: false })
-                .limit(1)
-                .maybeSingle();
-
-            if (draftError) {
-                console.error('❌ [Tipo] Error checking drafts:', draftError);
+            if (!draftId) {
+                throw new Error('No se pudo crear el borrador (ID inválido)');
             }
 
-            // ═══════════════════════════════════════════════════════════════
-            // SCENARIO A: Draft exists → Resume it
-            // ═══════════════════════════════════════════════════════════════
-            if (existingDraft?.id) {
-                console.log(`📝 [Tipo] Found existing draft: ${existingDraft.id} → Resuming`);
-                shouldResetLoading = false;
-                window.location.href = `/publicar/crear/${existingDraft.id}/paso-1`;
-                return;
-            }
+            console.log(`✅ [Tipo] Success! Redirecting to draft: ${draftId}`);
 
-            // ═══════════════════════════════════════════════════════════════
-            // SCENARIO B: No draft → Create new one with selected type
-            // ═══════════════════════════════════════════════════════════════
-            console.log(`🆕 [Tipo] No draft found → Creating new with type: ${selectedType}`);
-
-            const newDraftId = await createPropertyDraft(selectedType, userId);
-            console.log(`✅ [Tipo] Draft created: ${newDraftId}`);
-            shouldResetLoading = false;
-
-            window.location.href = `/publicar/crear/${newDraftId}/paso-1`;
+            // Force navigation to the wizard
+            window.location.href = `/publicar/crear/${draftId}/paso-1`;
 
         } catch (err: any) {
-            console.error('❌ [Tipo] Error in handleContinue:', err);
-            setError(err.message || 'Error al procesar. Intenta de nuevo.');
-        } finally {
-            if (shouldResetLoading) {
-                setIsProcessing(false);
-            }
+            console.error('❌ [Tipo] Error:', err);
+            setError(err.message || 'Error al procesar la solicitud.');
+            setIsProcessing(false); // Only stop loading on error
         }
     };
 

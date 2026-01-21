@@ -20,7 +20,14 @@ const lufga = localFont({
     display: 'swap',
 });
 
-// Property type from database
+// Property type from database with related images
+interface PropertyImage {
+    url: string;
+    category: string | null;
+    orden: number | null;
+    es_principal: boolean | null;
+}
+
 interface Property {
     id: string;
     titulo?: string | null;
@@ -33,9 +40,26 @@ interface Property {
     estado: string;
     created_at: string;
     updated_at?: string | null;
-    imagen_principal?: string | null;
     area_m2?: number | null;
+    inmueble_imagenes?: PropertyImage[];
 }
+
+// Helper to get the best image URL (prioritize fachada, then es_principal, then first)
+const getMainImageUrl = (images?: PropertyImage[]): string | null => {
+    if (!images || images.length === 0) return null;
+
+    // Priority 1: Look for 'fachada' category
+    const fachada = images.find(img => img.category === 'fachada');
+    if (fachada) return fachada.url;
+
+    // Priority 2: Look for es_principal = true
+    const principal = images.find(img => img.es_principal === true);
+    if (principal) return principal.url;
+
+    // Priority 3: Look for lowest orden
+    const sorted = [...images].sort((a, b) => (a.orden ?? 999) - (b.orden ?? 999));
+    return sorted[0]?.url || null;
+};
 
 // --- COLORES EXACTOS ---
 const primaryBlue = "bg-[#2563EB]";
@@ -51,22 +75,43 @@ export default function MisInmueblesPage() {
     const [isDeleting, setIsDeleting] = useState<string | null>(null);
     const [showUserMenu, setShowUserMenu] = useState(false);
 
+    // Safety timeout state - prevents infinite loading
+    const [authTimeout, setAuthTimeout] = useState(false);
+
     // Refs to prevent loops
     const dataFetched = useRef(false);
     const hasRedirected = useRef(false);
 
+    // Safety timeout: Force auth loading to complete after 5 seconds
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            if (authLoading) {
+                console.warn('⚠️ [Dashboard] Auth loading timeout - forcing completion');
+                setAuthTimeout(true);
+            }
+        }, 5000);
+
+        return () => clearTimeout(timer);
+    }, [authLoading]);
+
     // Fetch properties ONCE when user is available
     useEffect(() => {
-        // Skip if still loading auth
-        if (authLoading) return;
+        // Determine if we should proceed (either auth finished OR timeout)
+        const shouldProceed = !authLoading || authTimeout;
+
+        if (!shouldProceed) return;
 
         // If no user and haven't redirected yet, redirect
         if (!user) {
             if (!hasRedirected.current) {
                 hasRedirected.current = true;
                 console.log('🔒 [Dashboard] No user, redirecting to auth...');
-                router.push('/publicar/auth?intent=propietario');
+                // Small delay to prevent flash
+                setTimeout(() => {
+                    router.push('/publicar/auth?intent=propietario');
+                }, 100);
             }
+            setIsLoading(false);
             return;
         }
 
@@ -82,7 +127,15 @@ export default function MisInmueblesPage() {
 
                 const { data, error: fetchError } = await supabase
                     .from('inmuebles')
-                    .select('*')
+                    .select(`
+                        *,
+                        inmueble_imagenes (
+                            url,
+                            category,
+                            orden,
+                            es_principal
+                        )
+                    `)
                     .eq('propietario_id', user.id)
                     .order('updated_at', { ascending: false });
 
@@ -104,7 +157,7 @@ export default function MisInmueblesPage() {
 
         fetchProperties();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [user, authLoading]);
+    }, [user, authLoading, authTimeout]);
 
     // Filter properties based on active tab
     const filteredProperties = properties.filter(p => {
@@ -158,11 +211,16 @@ export default function MisInmueblesPage() {
         }
     };
 
-    // Logout handler
+    // Logout handler - Use window.location for reliable redirect
     const handleLogout = async () => {
         setShowUserMenu(false);
-        await supabase.auth.signOut();
-        router.push('/bienvenidos');
+        try {
+            await supabase.auth.signOut();
+        } catch (err) {
+            console.error('Logout error:', err);
+        }
+        // Force hard navigation to bypass AuthProvider race condition
+        window.location.href = '/bienvenidos';
     };
 
     const hasProperties = properties.length > 0;
@@ -171,8 +229,10 @@ export default function MisInmueblesPage() {
     const totalProps = properties.length;
     const publishedProps = properties.filter(p => p.estado === 'publicado').length;
 
-    // Loading state
-    if (authLoading || isLoading) {
+    // Loading state - respect timeout bypass
+    const showLoader = (authLoading && !authTimeout) || isLoading;
+
+    if (showLoader) {
         return (
             <div className={`min-h-screen ${bgLight} flex items-center justify-center ${lufga.className}`}>
                 <div className="text-center">
@@ -446,17 +506,20 @@ export default function MisInmueblesPage() {
 
                                                     {/* Image */}
                                                     <div className="relative h-56 overflow-hidden">
-                                                        {prop.imagen_principal ? (
-                                                            <img
-                                                                src={prop.imagen_principal}
-                                                                alt={prop.titulo || 'Propiedad'}
-                                                                className={`w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 ${isDraft ? 'grayscale' : ''}`}
-                                                            />
-                                                        ) : (
-                                                            <div className="w-full h-full bg-gray-100 flex items-center justify-center text-gray-300">
-                                                                <span className="material-symbols-outlined text-5xl">image</span>
-                                                            </div>
-                                                        )}
+                                                        {(() => {
+                                                            const mainImageUrl = getMainImageUrl(prop.inmueble_imagenes);
+                                                            return mainImageUrl ? (
+                                                                <img
+                                                                    src={mainImageUrl}
+                                                                    alt={prop.titulo || 'Propiedad'}
+                                                                    className={`w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 ${isDraft ? 'grayscale' : ''}`}
+                                                                />
+                                                            ) : (
+                                                                <div className="w-full h-full bg-gray-100 flex items-center justify-center text-gray-300">
+                                                                    <span className="material-symbols-outlined text-5xl">image</span>
+                                                                </div>
+                                                            );
+                                                        })()}
 
                                                         {/* Badges */}
                                                         <div className="absolute top-4 left-4">

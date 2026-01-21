@@ -263,7 +263,7 @@ export default function Paso2Page() {
                 propertyId,
                 userEmail!,
                 userId!,
-                `${window.location.origin}/publicar/exito`
+                `${window.location.origin}/publicar/exito?draftId=${propertyId}`
             );
 
             if (!res.success) {

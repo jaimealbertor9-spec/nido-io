@@ -42,7 +42,9 @@ export async function middleware(request: NextRequest) {
     console.log('🔐 [Middleware]', pathname, user ? `User: ${user.email}` : 'No user');
 
     // Protected routes: require authentication
-    const protectedRoutes = ['/mis-inmuebles', '/publicar/crear'];
+    // REMOVED '/publicar/crear' to prevent false positive redirects during wizard flow.
+    // The page components handle auth verification client-side via useAuth hook.
+    const protectedRoutes = ['/mis-inmuebles'];
     const isProtectedRoute = protectedRoutes.some(route => pathname.startsWith(route));
 
     if (!user && isProtectedRoute) {

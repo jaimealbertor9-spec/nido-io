@@ -20,19 +20,24 @@ function LoadingState() {
 
 function ExitoContent() {
     const searchParams = useSearchParams();
-    const transactionId = searchParams.get('id'); // Wompi envía el ID de transacción aquí
+    const transactionId = searchParams.get('id'); // Wompi sends transaction ID here
+    const draftId = searchParams.get('draftId'); // Our custom passthrough param
 
     const [status, setStatus] = useState<VerifyPaymentResult | null>(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        if (!transactionId) {
+        // Need either transactionId OR draftId to proceed
+        if (!transactionId && !draftId) {
+            console.log('❌ No transactionId or draftId found in URL');
             setLoading(false);
             return;
         }
 
-        // USAMOS LA FUNCIÓN CORRECTA PARA ID DE TRANSACCIÓN
-        verifyWompiTransaction(transactionId)
+        console.log('🔍 Verifying payment - transactionId:', transactionId, 'draftId:', draftId);
+
+        // Pass both transactionId and draftId to verification
+        verifyWompiTransaction(transactionId || '', draftId || '')
             .then((result) => {
                 console.log('Verification result:', result);
                 setStatus(result);
@@ -43,7 +48,7 @@ function ExitoContent() {
             .finally(() => {
                 setLoading(false);
             });
-    }, [transactionId]);
+    }, [transactionId, draftId]);
 
     if (loading) return <LoadingState />;
 

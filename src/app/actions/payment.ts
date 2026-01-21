@@ -5,7 +5,16 @@ import { createClient } from '@supabase/supabase-js';
 
 const AMOUNT_IN_CENTS = 1000000; // $10,000 COP
 const CURRENCY = 'COP';
-const WOMPI_CHECKOUT_URL = 'https://checkout.wompi.co/p/';
+
+// Wompi API endpoints - Use sandbox for development
+const WOMPI_API_BASE = process.env.NODE_ENV === 'production'
+    ? 'https://production.wompi.co/v1'
+    : 'https://sandbox.wompi.co/v1';
+
+// Dynamic base URL for redirects
+const getBaseUrl = () => {
+    return process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+};
 
 function generateReference(propertyId: string): string {
     const timestamp = Date.now();
@@ -17,28 +26,59 @@ export async function initiatePaymentSession(
     propertyId: string,
     userEmail: string,
     userId: string,
-    redirectUrl?: string
+    customRedirectUrl?: string
 ) {
     console.log('🚀 [Payment] Iniciando sesión para:', userId);
+    console.log('🌐 [Payment] Base URL:', getBaseUrl());
+    console.log('🔧 [Payment] NODE_ENV:', process.env.NODE_ENV);
+    console.log('📡 [Payment] Using Wompi API:', WOMPI_API_BASE);
 
-    // 1. MOVER VARIABLES DENTRO DE LA FUNCIÓN (Fix Build Error)
+    // 1. Initialize Supabase client
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
-    // DEBUG: Log key status (NOT the key itself)
     console.log('🔑 [Payment] SUPABASE_SERVICE_ROLE_KEY defined:', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
-    console.log('🔑 [Payment] Using service role key:', !!process.env.SUPABASE_SERVICE_ROLE_KEY ? 'SERVICE_ROLE' : 'ANON_KEY');
 
     if (!supabaseUrl || !supabaseServiceKey) {
         return { success: false, error: 'Error de configuración del servidor' };
     }
 
-    // Usamos el cliente genérico para evitar errores de tipos estrictos
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     try {
-        // 2. Verificar Documentos (Usando nombres en ESPAÑOL)
-        // Usamos <any> para que TypeScript no bloquee el build si espera 'status' en inglés
+        // 2. Fetch property and user data for customer info
+        console.log('📋 [Payment] Fetching property data...');
+        const { data: propertyData, error: propertyError } = await supabase
+            .from('inmuebles')
+            .select('titulo, telefono_llamadas, whatsapp')
+            .eq('id', propertyId)
+            .single();
+
+        if (propertyError) {
+            console.warn('⚠️ [Payment] Could not fetch property data:', propertyError.message);
+        }
+
+        // Get user phone from usuarios table
+        const { data: userData, error: userError } = await supabase
+            .from('usuarios')
+            .select('telefono, nombre')
+            .eq('id', userId)
+            .single();
+
+        if (userError) {
+            console.warn('⚠️ [Payment] Could not fetch user data:', userError.message);
+        }
+
+        // Extract phone (priority: user phone > property whatsapp > property phone)
+        const customerPhone = userData?.telefono
+            || propertyData?.whatsapp
+            || propertyData?.telefono_llamadas
+            || '';
+        const customerName = userData?.nombre || userEmail.split('@')[0];
+
+        console.log('👤 [Payment] Customer:', customerName, customerPhone ? '(phone found)' : '(no phone)');
+
+        // 3. Verify user documents
         const { data: userVerifications } = await supabase
             .from('user_verifications')
             .select('estado, documento_url')
@@ -51,80 +91,113 @@ export async function initiatePaymentSession(
             return { success: false, error: 'Debes subir tu documento de identidad antes de pagar.' };
         }
 
-        // 3. Generar Firma Wompi
-        // Priority: Secure server-side env var → Legacy public env var → Error
-        const integritySecret = process.env.WOMPI_INTEGRITY_SECRET || process.env.NEXT_PUBLIC_WOMPI_INTEGRITY_SECRET;
+        // 4. Get Wompi credentials
         const publicKey = process.env.NEXT_PUBLIC_WOMPI_PUBLIC_KEY || process.env.WOMPI_PUBLIC_KEY;
+        const privateKey = process.env.WOMPI_PRIVATE_KEY;
+        const integritySecret = process.env.WOMPI_INTEGRITY_SECRET || process.env.NEXT_PUBLIC_WOMPI_INTEGRITY_SECRET;
 
-        // Validate required Wompi configuration
-        if (!integritySecret) {
-            console.error('❌ [Payment] Configuration Error: WOMPI_INTEGRITY_SECRET is missing');
-            throw new Error('Configuration Error: WOMPI_INTEGRITY_SECRET is missing');
-        }
         if (!publicKey) {
-            console.error('❌ [Payment] Configuration Error: Public Key is undefined');
-            throw new Error('SERVER ERROR: Public Key is undefined. Check Vercel Env Vars.');
+            console.error('❌ [Payment] Missing WOMPI_PUBLIC_KEY');
+            throw new Error('Configuration Error: WOMPI_PUBLIC_KEY is missing');
         }
-        console.log('✅ [Payment] Wompi configuration validated, publicKey:', publicKey.substring(0, 8) + '...');
+        if (!privateKey) {
+            console.error('❌ [Payment] Missing WOMPI_PRIVATE_KEY');
+            throw new Error('Configuration Error: WOMPI_PRIVATE_KEY is missing');
+        }
+
+        console.log('✅ [Payment] Wompi configuration validated');
 
         const reference = generateReference(propertyId);
-
-        // CRITICAL: Wompi requires amount as a clean integer string (no decimals)
         const amountInCentsInt = Math.round(Number(AMOUNT_IN_CENTS));
-        const amountStr = amountInCentsInt.toString();
 
-        // SHA-256 Signature: reference + amountInCents + currency + integritySecret
+        // 5. Generate integrity signature
         const signatureChain = `${reference}${amountInCentsInt}${CURRENCY}${integritySecret}`;
-        console.log('🔍 [Payment Debug] Pre-Hash String:', signatureChain);
-        console.log('🔍 [Payment Debug] Amount as integer:', amountInCentsInt, 'type:', typeof amountInCentsInt);
-
         const signature = createHash('sha256').update(signatureChain).digest('hex');
-        console.log('🔐 [Payment] Integrity signature generated for reference:', reference);
-        console.log('🔐 [Payment] Signature hash:', signature);
+        console.log('🔐 [Payment] Signature generated for reference:', reference);
 
-        // 4. Guardar Pago en BD
+        // 6. Build dynamic redirect URL with draftId passthrough
+        // IMPORTANT: Wompi Payment Links use opaque references, so we pass draftId via URL
+        const baseUrl = getBaseUrl();
+        const redirectUrl = customRedirectUrl || `${baseUrl}/publicar/exito?draftId=${propertyId}`;
+        console.log('🔗 [Payment] Redirect URL:', redirectUrl);
+
+        // 7. Create Payment Link via Wompi API
+        console.log('📡 [Payment] Calling Wompi Payment Links API...');
+
+        const paymentLinkPayload: any = {
+            name: `Publicación - ${propertyData?.titulo?.substring(0, 30) || propertyId.substring(0, 8)}`,
+            description: 'Publicación de inmueble en Nido.io',
+            single_use: true,
+            collect_shipping: false,
+            currency: CURRENCY,
+            amount_in_cents: amountInCentsInt,
+            redirect_url: redirectUrl
+        };
+
+        // NOTE: customer_data is OPTIONAL for payment_links
+        // We skip it to avoid 422 validation errors with customer_references format
+        // The reference is stored in our DB and passed via redirect_url query params
+
+        console.log('📦 [Payment] Payload:', JSON.stringify(paymentLinkPayload, null, 2));
+
+        const wompiResponse = await fetch(`${WOMPI_API_BASE}/payment_links`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${privateKey}`
+            },
+            body: JSON.stringify(paymentLinkPayload)
+        });
+
+        const responseText = await wompiResponse.text();
+
+        if (!wompiResponse.ok) {
+            console.error('❌ [Payment] Wompi API Error:', wompiResponse.status, responseText);
+            throw new Error(`Wompi API Error ${wompiResponse.status}: ${responseText}`);
+        }
+
+        const wompiData = JSON.parse(responseText);
+        console.log('✅ [Payment] Wompi Payment Link created:', wompiData.data?.id);
+
+        // The checkout URL from Payment Links API
+        const checkoutUrl = `https://checkout.wompi.co/l/${wompiData.data.id}`;
+
+        // 8. Save payment record to DB
         const { error: insertError } = await supabase
             .from('pagos')
             .insert({
-                usuario_id: userId,  // FK to usuarios table
+                usuario_id: userId,
                 inmueble_id: propertyId,
                 referencia_pedido: reference,
-                monto: amountInCentsInt / 100,  // Convert cents to currency units
+                monto: amountInCentsInt / 100,
                 estado: 'pendiente',
-                metodo_pago: 'wompi_redirect',
+                metodo_pago: 'wompi_link',
                 datos_transaccion: {
                     user_email: userEmail,
+                    wompi_link_id: wompiData.data.id,
+                    redirect_url: redirectUrl,
                     signature: signature
                 }
             });
 
         if (insertError) {
-            console.error('❌ Error insertando pago:', insertError);
-            console.error('❌ [Payment] Insert error details:', JSON.stringify(insertError, null, 2));
+            console.error('❌ [Payment] DB Insert error:', insertError);
             return { success: false, error: `DB Error: ${insertError.message}` };
         }
 
-        // 5. Construir URL
-        const checkoutUrl = new URL(WOMPI_CHECKOUT_URL);
-        checkoutUrl.searchParams.set('public-key', publicKey);
-        checkoutUrl.searchParams.set('currency', CURRENCY);
-        checkoutUrl.searchParams.set('amount-in-cents', amountStr);
-        checkoutUrl.searchParams.set('reference', reference);
-        checkoutUrl.searchParams.set('signature:integrity', signature);
-        if (redirectUrl) checkoutUrl.searchParams.set('redirect-url', redirectUrl);
-
-        console.log('🔗 [Payment] Generated Wompi URL:', checkoutUrl.toString());
+        console.log('🔗 [Payment] Generated Wompi Checkout URL:', checkoutUrl);
 
         return {
             success: true,
             data: {
-                checkoutUrl: checkoutUrl.toString(),
-                reference
+                checkoutUrl,
+                reference,
+                wompiLinkId: wompiData.data.id
             }
         };
 
     } catch (error: any) {
-        console.error('💥 Error:', error.message);
-        return { success: false, error: 'Error inesperado al procesar pago' };
+        console.error('💥 [Payment] Error:', error.message);
+        return { success: false, error: error.message || 'Error inesperado al procesar pago' };
     }
 }
