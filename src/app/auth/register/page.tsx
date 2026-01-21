@@ -58,6 +58,20 @@ export default function RegisterPage() {
 
             console.log("✅ Usuario Auth creado:", authData.user.id);
 
+            // Send welcome email (non-blocking)
+            fetch('/api/emails/welcome', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email: email.trim(),
+                    name: name.trim()
+                }),
+            }).then(() => {
+                console.log("📧 Welcome email request sent");
+            }).catch((emailErr) => {
+                console.warn("⚠️ Welcome email failed (non-blocking):", emailErr);
+            });
+
             // 2. Insert into usuarios table with intent-based tipo_usuario
             const { error: dbError } = await supabase
                 .from('usuarios')

@@ -1,5 +1,7 @@
 import { createHash } from 'crypto';
 import { createClient } from '@supabase/supabase-js';
+import { resend } from '@/lib/resend';
+import { PaymentSuccessEmail } from '@/components/emails/PaymentSuccessEmail';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // WOMPI WEBHOOK HANDLER
@@ -151,11 +153,15 @@ export async function POST(request: Request): Promise<Response> {
       if (propertyId) {
         const { data: inmueble } = await supabase
           .from('inmuebles')
-          .select('id, propietario_id')
+          .select('id, propietario_id, titulo, ciudad, precio')
           .eq('id', propertyId)
           .single();
 
         if (inmueble) {
+          // Fetch property details for email
+          const propertyName = inmueble.titulo || undefined;
+          const propertyLocation = inmueble.ciudad || undefined;
+          const propertyPrice = inmueble.precio || undefined;
           // Insert new payment record
           const { data: newPago, error: insertError } = await supabase
             .from('pagos')
@@ -181,6 +187,12 @@ export async function POST(request: Request): Promise<Response> {
 
           // Continue with inmueble update using the new payment
           await updateInmueble(supabase, inmueble.id, newPago?.id);
+
+          // Send confirmation email with property details
+          const customerEmail = transaction.customer_email;
+          const customerName = transaction.customer_data?.full_name || 'Usuario';
+          await sendPaymentConfirmationEmail(customerEmail, customerName, propertyName, propertyLocation, propertyPrice);
+
           return Response.json({
             success: true,
             message: 'Payment created and inmueble updated via draftId passthrough',
@@ -207,6 +219,32 @@ export async function POST(request: Request): Promise<Response> {
     } else {
       console.log('[WOMPI WEBHOOK] ⚠️ No inmueble_id associated with payment');
     }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // STEP 5: SEND CONFIRMATION EMAIL
+    // ─────────────────────────────────────────────────────────────────────
+    // Fetch property details for email
+    let propertyName: string | undefined;
+    let propertyLocation: string | undefined;
+    let propertyPrice: number | undefined;
+
+    if (pago.inmueble_id) {
+      const { data: propertyData } = await supabase
+        .from('inmuebles')
+        .select('titulo, ciudad, precio')
+        .eq('id', pago.inmueble_id)
+        .single();
+
+      if (propertyData) {
+        propertyName = propertyData.titulo || undefined;
+        propertyLocation = propertyData.ciudad || undefined;
+        propertyPrice = propertyData.precio || undefined;
+      }
+    }
+
+    const customerEmail = transaction.customer_email;
+    const customerName = transaction.customer_data?.full_name || 'Usuario';
+    await sendPaymentConfirmationEmail(customerEmail, customerName, propertyName, propertyLocation, propertyPrice);
 
     console.log('[WOMPI WEBHOOK] ✅ Webhook processing complete');
     console.log('═══════════════════════════════════════════════════════════════');
@@ -253,6 +291,39 @@ async function updateInmueble(supabase: any, inmuebleId: string, pagoId: string 
     console.error('[WOMPI WEBHOOK] ❌ Failed to update inmueble:', inmuebleError);
   } else {
     console.log('[WOMPI WEBHOOK] ✅ Inmueble updated to en_revision with 30-day expiration');
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPER: Send payment confirmation email
+// ─────────────────────────────────────────────────────────────────────────────
+async function sendPaymentConfirmationEmail(
+  email: string | undefined,
+  nombre: string,
+  propertyName?: string,
+  propertyLocation?: string,
+  propertyPrice?: number
+) {
+  if (!email) {
+    console.log('[WOMPI WEBHOOK] ⚠️ No customer email provided, skipping email notification');
+    return;
+  }
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from: 'Nido <onboarding@resend.dev>',
+      to: email,
+      subject: '¡Pago Recibido! Tu inmueble está en revisión',
+      react: PaymentSuccessEmail({ nombre, propertyName, propertyLocation, propertyPrice }),
+    });
+
+    if (error) {
+      console.error('[WOMPI WEBHOOK] ⚠️ Email failed to send:', error);
+    } else {
+      console.log('[WOMPI WEBHOOK] 📧 Email sent successfully:', data?.id);
+    }
+  } catch (emailError: any) {
+    console.error('[WOMPI WEBHOOK] ⚠️ Email failed to send:', emailError.message);
   }
 }
 
