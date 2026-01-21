@@ -13,10 +13,15 @@ import type { VerifyPaymentResult } from './action-types';
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-// Wompi API config
-const WOMPI_API_URL = process.env.WOMPI_ENV === 'production'
-    ? 'https://production.wompi.co/v1'
-    : 'https://sandbox.wompi.co/v1';
+// Wompi API config - Detect based on key prefix, NOT environment variables
+// This prevents mismatch when using test keys in production environment
+const getWompiApiUrl = () => {
+    const privateKey = process.env.WOMPI_PRIVATE_KEY || '';
+    const isTestKey = privateKey.startsWith('prv_test_');
+    return isTestKey
+        ? 'https://sandbox.wompi.co/v1'
+        : 'https://production.wompi.co/v1';
+};
 
 export type { VerifyPaymentResult } from './action-types';
 
@@ -43,7 +48,7 @@ export async function verifyWompiTransaction(
 
         console.log('🔍 [Verify] Verifying Wompi transaction:', transactionId);
 
-        const response = await fetch(`${WOMPI_API_URL}/transactions/${transactionId}`, {
+        const response = await fetch(`${getWompiApiUrl()}/transactions/${transactionId}`, {
             method: 'GET',
             headers: { 'Content-Type': 'application/json' },
             cache: 'no-store'
@@ -197,7 +202,7 @@ export async function verifyPaymentByReference(reference: string): Promise<Verif
         if (payment.estado === 'pendiente') {
             console.log('⏳ [Verify] Local is pending, asking Wompi...');
             const wompiResponse = await fetch(
-                `${WOMPI_API_URL}/transactions?reference=${encodeURIComponent(reference)}`,
+                `${getWompiApiUrl()}/transactions?reference=${encodeURIComponent(reference)}`,
                 { method: 'GET', headers: { 'Content-Type': 'application/json' }, cache: 'no-store' }
             );
 

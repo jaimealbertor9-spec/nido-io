@@ -6,10 +6,18 @@ import { createClient } from '@supabase/supabase-js';
 const AMOUNT_IN_CENTS = 1000000; // $10,000 COP
 const CURRENCY = 'COP';
 
-// Wompi API endpoints - Use sandbox for development
-const WOMPI_API_BASE = process.env.NODE_ENV === 'production'
-    ? 'https://production.wompi.co/v1'
-    : 'https://sandbox.wompi.co/v1';
+// Wompi API endpoints - Detect based on key prefix, NOT NODE_ENV
+// This prevents mismatch when using test keys in production environment
+const getWompiApiBase = () => {
+    const privateKey = process.env.WOMPI_PRIVATE_KEY || '';
+    const isTestKey = privateKey.startsWith('prv_test_');
+    const apiBase = isTestKey
+        ? 'https://sandbox.wompi.co/v1'
+        : 'https://production.wompi.co/v1';
+
+    console.log(`🔧 [Payment] Wompi Env: ${isTestKey ? 'SANDBOX' : 'PRODUCTION'} (Key: ${privateKey.substring(0, 12)}...)`);
+    return apiBase;
+};
 
 // Dynamic base URL for redirects
 const getBaseUrl = () => {
@@ -140,7 +148,7 @@ export async function initiatePaymentSession(
 
         console.log('📦 [Payment] Payload:', JSON.stringify(paymentLinkPayload, null, 2));
 
-        const wompiResponse = await fetch(`${WOMPI_API_BASE}/payment_links`, {
+        const wompiResponse = await fetch(`${getWompiApiBase()}/payment_links`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
