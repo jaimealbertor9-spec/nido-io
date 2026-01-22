@@ -75,48 +75,20 @@ export default function MisInmueblesPage() {
     const [isDeleting, setIsDeleting] = useState<string | null>(null);
     const [showUserMenu, setShowUserMenu] = useState(false);
 
-    // Safety timeout state - prevents infinite loading
-    const [authTimeout, setAuthTimeout] = useState(false);
-
-    // Refs to prevent loops
+    // Ref to prevent duplicate fetches
     const dataFetched = useRef(false);
-    const hasRedirected = useRef(false);
 
-    // Safety timeout: Force auth loading to complete after 5 seconds
+    // Redirect if not authenticated (after loading completes)
     useEffect(() => {
-        const timer = setTimeout(() => {
-            if (authLoading) {
-                console.warn('⚠️ [Dashboard] Auth loading timeout - forcing completion');
-                setAuthTimeout(true);
-            }
-        }, 5000);
-
-        return () => clearTimeout(timer);
-    }, [authLoading]);
+        if (!authLoading && !user) {
+            console.log('🔒 [Dashboard] No user, redirecting to auth...');
+            router.push('/publicar/auth?intent=propietario');
+        }
+    }, [user, authLoading, router]);
 
     // Fetch properties ONCE when user is available
     useEffect(() => {
-        // Determine if we should proceed (either auth finished OR timeout)
-        const shouldProceed = !authLoading || authTimeout;
-
-        if (!shouldProceed) return;
-
-        // If no user and haven't redirected yet, redirect
-        if (!user) {
-            if (!hasRedirected.current) {
-                hasRedirected.current = true;
-                console.log('🔒 [Dashboard] No user, redirecting to auth...');
-                // Small delay to prevent flash
-                setTimeout(() => {
-                    router.push('/publicar/auth?intent=propietario');
-                }, 100);
-            }
-            setIsLoading(false);
-            return;
-        }
-
-        // If already fetched data, skip
-        if (dataFetched.current) return;
+        if (authLoading || !user || dataFetched.current) return;
         dataFetched.current = true;
 
         const fetchProperties = async () => {
@@ -156,8 +128,7 @@ export default function MisInmueblesPage() {
         };
 
         fetchProperties();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [user, authLoading, authTimeout]);
+    }, [user, authLoading]);
 
     // Filter properties based on active tab
     const filteredProperties = properties.filter(p => {
@@ -229,10 +200,8 @@ export default function MisInmueblesPage() {
     const totalProps = properties.length;
     const publishedProps = properties.filter(p => p.estado === 'publicado').length;
 
-    // Loading state - respect timeout bypass
-    const showLoader = (authLoading && !authTimeout) || isLoading;
-
-    if (showLoader) {
+    // Loading state - only show while auth is checking OR fetching data
+    if (authLoading || isLoading) {
         return (
             <div className={`min-h-screen ${bgLight} flex items-center justify-center ${lufga.className}`}>
                 <div className="text-center">
@@ -241,6 +210,11 @@ export default function MisInmueblesPage() {
                 </div>
             </div>
         );
+    }
+
+    // If no user after loading, we're redirecting - show nothing
+    if (!user) {
+        return null;
     }
 
     // Tab labels
