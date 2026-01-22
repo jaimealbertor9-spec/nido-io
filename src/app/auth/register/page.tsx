@@ -77,20 +77,6 @@ export default function RegisterPage() {
                 console.log("✅ Usuario insertado en DB con tipo_usuario:", intent || 'NULL');
             }
 
-            // ENVIAR EMAIL EN SEGUNDO PLANO (SIN AWAIT)
-            // Esto evita que la interfaz se congele esperando al servidor de correo
-            fetch('/api/emails/welcome', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    email: email.trim(),
-                    name: name.trim()
-                }),
-                keepalive: true, // Asegura que el envío continúe aunque cambie de página
-            }).catch((emailErr) => {
-                console.warn("⚠️ El correo de bienvenida tardó, pero el registro sigue:", emailErr);
-            });
-
             // 3. Smart redirect based on intent AND type
             // If user has a property type, create draft and go to wizard
             if (propertyType && authData.user.id) {
