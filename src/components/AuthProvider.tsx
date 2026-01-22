@@ -1,9 +1,9 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase'; // <--- CHANGED: Import singleton directly
 import { useRouter, usePathname } from 'next/navigation';
-import { User, Session } from '@supabase/supabase-js';
+import { User } from '@supabase/supabase-js';
 
 type AuthContextType = {
     user: User | null;
@@ -18,6 +18,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [profile, setProfile] = useState<any | null>(null);
     const [loading, setLoading] = useState(true);
     const router = useRouter();
+    // const supabase = createClient(); <--- REMOVED: We use the imported singleton
 
     useEffect(() => {
         let mounted = true;
@@ -29,7 +30,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 if (mounted) {
                     if (session?.user) {
                         setUser(session.user);
-                        // Fetch profile securely
+                        // Safe profile fetch
                         const { data } = await supabase.from('usuarios').select('*').eq('id', session.user.id).single();
                         setProfile(data);
                     }
@@ -43,7 +44,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         getSession();
 
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event: string, session: Session | null) => {
+        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
             if (!mounted) return;
 
             if (session?.user) {

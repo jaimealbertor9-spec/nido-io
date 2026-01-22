@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
@@ -9,7 +9,25 @@ import { createPropertyDraft } from '@/app/actions/publish';
 // Valid business persona types
 type UserIntent = 'propietario' | 'inquilino' | null;
 
+// Loading component for Suspense fallback
+function RegisterLoadingFallback() {
+    return (
+        <div className="min-h-screen bg-white flex items-center justify-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-nido-700"></div>
+        </div>
+    );
+}
+
+// Main page wrapper with Suspense
 export default function RegisterPage() {
+    return (
+        <Suspense fallback={<RegisterLoadingFallback />}>
+            <RegisterContent />
+        </Suspense>
+    );
+}
+
+function RegisterContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
 

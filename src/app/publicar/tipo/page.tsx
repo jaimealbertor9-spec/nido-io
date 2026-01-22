@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Fredoka } from 'next/font/google';
 import { ChevronLeft, ChevronRight, LucideIcon, Loader2 } from 'lucide-react';
@@ -37,7 +37,25 @@ const PROPERTY_TYPES: PropertyOption[] = [
     { id: 'casa_lote', label: 'Casa Lote', icon: '/plano-de-la-casa.png', isImage: true },
 ];
 
+// Loading component for Suspense fallback
+function TipoLoadingFallback() {
+    return (
+        <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white flex items-center justify-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#0c263b]"></div>
+        </div>
+    );
+}
+
+// Main page wrapper with Suspense
 export default function TipoInmueblePage() {
+    return (
+        <Suspense fallback={<TipoLoadingFallback />}>
+            <TipoContent />
+        </Suspense>
+    );
+}
+
+function TipoContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const { user, loading: authLoading } = useAuth(); // Use AuthProvider instead of getSession()
