@@ -1,8 +1,8 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase'; // <--- CHANGED: Import singleton directly
-import { useRouter, usePathname } from 'next/navigation';
+import { supabase } from '@/lib/supabase';
+import { useRouter } from 'next/navigation';
 import { User } from '@supabase/supabase-js';
 
 type AuthContextType = {
@@ -18,26 +18,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [profile, setProfile] = useState<any | null>(null);
     const [loading, setLoading] = useState(true);
     const router = useRouter();
-    // const supabase = createClient(); <--- REMOVED: We use the imported singleton
 
     useEffect(() => {
         let mounted = true;
 
         async function getSession() {
             try {
-                const { data: { session } } = await supabase.auth.getSession();
+                const { data: { session }, error } = await supabase.auth.getSession();
+                if (error) throw error;
 
                 if (mounted) {
                     if (session?.user) {
                         setUser(session.user);
-                        // Safe profile fetch
-                        const { data } = await supabase.from('usuarios').select('*').eq('id', session.user.id).single();
-                        setProfile(data);
+                        // Simple, robust fetch
+                        try {
+                            const { data } = await supabase.from('usuarios').select('*').eq('id', session.user.id).single();
+                            if (mounted) setProfile(data);
+                        } catch (profileErr) {
+                            console.error('Profile fetch error (init):', profileErr);
+                        }
                     }
-                    setLoading(false);
                 }
             } catch (error) {
-                console.error('Auth error:', error);
+                console.error('Auth initialization error:', error);
+            } finally {
                 if (mounted) setLoading(false);
             }
         }
@@ -49,13 +53,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             if (session?.user) {
                 setUser(session.user);
-                const { data } = await supabase.from('usuarios').select('*').eq('id', session.user.id).single();
-                setProfile(data);
+                // Simple, robust fetch inside change event
+                try {
+                    const { data } = await supabase.from('usuarios').select('*').eq('id', session.user.id).single();
+                    if (mounted) setProfile(data);
+                } catch (err) {
+                    console.error('Profile fetch error (change):', err);
+                }
             } else {
                 setUser(null);
                 setProfile(null);
             }
-            setLoading(false);
+
+            // CRITICAL: Always turn off loading
+            if (mounted) setLoading(false);
         });
 
         return () => {
