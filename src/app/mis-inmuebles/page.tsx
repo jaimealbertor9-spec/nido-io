@@ -78,17 +78,32 @@ export default function MisInmueblesPage() {
     // Ref to prevent duplicate fetches
     const dataFetched = useRef(false);
 
-    // Redirect if not authenticated (after loading completes)
-    useEffect(() => {
-        if (!authLoading && !user) {
-            console.log('🔒 [Dashboard] No user, redirecting to auth...');
+    // 🛡️ STRICT LOADING GUARD - MUST be BEFORE any redirect logic!
+    // This prevents the race condition where redirect fires before auth resolves.
+    if (authLoading) {
+        return (
+            <div className={`min-h-screen ${bgLight} flex items-center justify-center ${lufga.className}`}>
+                <div className="text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#2563EB] mx-auto"></div>
+                    <p className="text-slate-500 mt-4 text-lg font-medium">Cargando...</p>
+                </div>
+            </div>
+        );
+    }
+
+    // 🔒 REDIRECT GUARD - Only runs AFTER authLoading is false
+    // Since authLoading is guaranteed false here, user state is reliable.
+    if (!user) {
+        // Use effect-free redirect for cleaner flow
+        if (typeof window !== 'undefined') {
             router.push('/publicar/auth?intent=propietario');
         }
-    }, [user, authLoading, router]);
+        return null;
+    }
 
     // Fetch properties ONCE when user is available
     useEffect(() => {
-        if (authLoading || !user || dataFetched.current) return;
+        if (dataFetched.current) return;
         dataFetched.current = true;
 
         const fetchProperties = async () => {
@@ -128,7 +143,7 @@ export default function MisInmueblesPage() {
         };
 
         fetchProperties();
-    }, [user, authLoading]);
+    }, [user]);
 
     // Filter properties based on active tab
     const filteredProperties = properties.filter(p => {
@@ -200,8 +215,8 @@ export default function MisInmueblesPage() {
     const totalProps = properties.length;
     const publishedProps = properties.filter(p => p.estado === 'publicado').length;
 
-    // Loading state - only show while auth is checking OR fetching data
-    if (authLoading || isLoading) {
+    // Secondary loading state for data fetch (after auth is confirmed)
+    if (isLoading) {
         return (
             <div className={`min-h-screen ${bgLight} flex items-center justify-center ${lufga.className}`}>
                 <div className="text-center">
@@ -210,11 +225,6 @@ export default function MisInmueblesPage() {
                 </div>
             </div>
         );
-    }
-
-    // If no user after loading, we're redirecting - show nothing
-    if (!user) {
-        return null;
     }
 
     // Tab labels
