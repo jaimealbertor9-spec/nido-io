@@ -29,13 +29,15 @@ export default function DashboardPage() {
     useEffect(() => {
         if (loading || !user || dataFetched.current) return;
 
+        const userId = user.id; // Capture user.id before async to satisfy TS
+
         async function fetchProperties() {
             setIsLoadingProps(true);
             try {
                 const { data, error } = await supabase
                     .from('inmuebles')
                     .select('*, imagenes(*)')
-                    .eq('propietario_id', user.id)
+                    .eq('propietario_id', userId)
                     .order('created_at', { ascending: false });
 
                 if (error) throw error;
