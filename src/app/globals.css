@@ -2,11 +2,23 @@
 @tailwind components;
 @tailwind utilities;
 
+/* RESTORED ORIGINAL FONTS */
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+
 /* Force pure white background - no gradients */
 body {
   background-color: #ffffff !important;
   color: #1F2937;
   font-family: 'Inter', system-ui, sans-serif;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: 'Fredoka', sans-serif;
 }
 
 /* Animaciones suaves */
