@@ -56,6 +56,9 @@ export default function InmuebleVerificationForm({
         setPreview(URL.createObjectURL(selectedFile));
         setError(null);
         setSuccess(false);
+
+        // FIX: Reset input value so the same file can be re-selected after deletion
+        e.target.value = '';
     };
 
     const clearFile = () => {

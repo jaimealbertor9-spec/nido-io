@@ -44,7 +44,7 @@ export default function DashboardPage() {
 
     const handleSignOut = async () => {
         await signOut();
-        router.push('/bienvenido');
+        router.push('/bienvenidos');
     };
 
     // AVATAR & NAME LOGIC

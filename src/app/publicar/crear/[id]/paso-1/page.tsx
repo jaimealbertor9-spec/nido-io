@@ -454,7 +454,7 @@ export default function Paso1Page() {
     }
 
     return (
-        <div className={`${inter.className} space-y-8`}>
+        <div className={`${inter.className} space-y-8`} style={{ fontFamily: 'Lufga, sans-serif' }}>
             {/* Header */}
             <div>
                 <h1 className="text-2xl font-semibold text-[#0c263b] mb-1">

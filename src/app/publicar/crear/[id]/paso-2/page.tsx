@@ -336,7 +336,7 @@ export default function Paso2Page() {
     if (isLoading) return <div className="p-10 flex justify-center"><Loader2 className="animate-spin" /></div>;
 
     return (
-        <div className={`${inter.className} space-y-8`}>
+        <div className={`${inter.className} space-y-8`} style={{ fontFamily: 'Lufga, sans-serif' }}>
             {/* Header */}
             <div>
                 <h1 className="text-2xl font-semibold text-slate-900 mb-1">Detalles y Multimedia</h1>
