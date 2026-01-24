@@ -12,7 +12,6 @@ type AuthContextType = {
     signOut: () => Promise<void>;
 };
 
-// Default context
 const AuthContext = createContext<AuthContextType>({
     user: null,
     loading: true,
@@ -36,35 +35,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     useEffect(() => {
         let mounted = true;
 
-        // 🚀 OPTIMISTIC STRATEGY:
-        // We listen immediately. Supabase fires this event INSTANTLY with LocalStorage data.
-        // We do NOT block waiting for the server.
+        // 1. SETUP LISTENER (Reacts to live changes)
         const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-            if (!mounted) return;
-
-            // 1. Instant User Set (Cache/Local)
-            if (session?.user) {
-                setUser(session.user);
-
-                // 2. Background Profile Fetch (Does NOT block UI)
-                // We assume user is valid and show UI while we fetch details
-                try {
+            if (mounted) {
+                if (session?.user) {
+                    setUser(session.user);
+                    // Fetch profile silently
                     const { data } = await supabase.from('usuarios').select('*').eq('id', session.user.id).single();
-                    if (mounted && data) {
-                        setProfile(data);
-                    }
-                } catch (error) {
-                    console.error('Background profile sync warning:', error);
+                    if (mounted && data) setProfile(data);
+                } else {
+                    setUser(null);
+                    setProfile(null);
                 }
-            } else {
-                // User is definitely logged out
-                setUser(null);
-                setProfile(null);
+                // ALWAYS UNLOCK LOADING ON EVENT
+                setLoading(false);
             }
+        });
 
-            // 3. CRITICAL: Stop loading immediately.
-            // This breaks the infinite loop because we don't wait for a slow network.
-            setLoading(false);
+        // 2. FAIL-SAFE INITIAL CHECK (Guarantees loading finishes)
+        supabase.auth.getSession().then(async ({ data: { session } }) => {
+            if (mounted) {
+                if (session?.user) {
+                    setUser(session.user);
+                    // Fetch profile silently (Redundant but safe)
+                    const { data } = await supabase.from('usuarios').select('*').eq('id', session.user.id).single();
+                    if (mounted && data) setProfile(data);
+                }
+                // ALWAYS UNLOCK LOADING ON CHECK
+                setLoading(false);
+            }
         });
 
         return () => {
