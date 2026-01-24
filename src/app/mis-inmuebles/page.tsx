@@ -6,8 +6,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import {
-    LayoutDashboard, Home, BarChart2, MessageSquare, Settings,
-    Search, PlusCircle, Bell, TrendingUp, MapPin, Heart, MoreHorizontal, LogOut, ChevronDown
+    LayoutDashboard, Building, BarChart2, MessageSquare, Settings,
+    Search, Plus, Bell, Home, PlayCircle, ShieldCheck, CreditCard, Users, LogOut, ChevronDown
 } from 'lucide-react';
 import Image from 'next/image';
 
@@ -15,40 +15,48 @@ export default function DashboardPage() {
     const { user, loading, profile, signOut } = useAuth();
     const router = useRouter();
     const [properties, setProperties] = useState<any[]>([]);
-    const [loadingProps, setLoadingProps] = useState(false);
-    const [isUserMenuOpen, setIsUserMenuOpen] = useState(false); // Dropdown state
+    const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+
+    // FAILSAFE: Force the page to render after 1.5 seconds, even if Auth is stuck.
+    const [forceReady, setForceReady] = useState(false);
+
+    useEffect(() => {
+        const timer = setTimeout(() => setForceReady(true), 1500);
+        return () => clearTimeout(timer);
+    }, []);
 
     // DATA FETCHING
     useEffect(() => {
-        if (loading || !user) return;
+        if ((loading && !forceReady) || !user) return;
 
         const userId = user.id; // Capture for TypeScript
 
         async function fetchData() {
-            setLoadingProps(true);
             const { data } = await supabase
                 .from('inmuebles')
                 .select('*, imagenes(*)')
                 .eq('propietario_id', userId)
                 .order('created_at', { ascending: false });
             setProperties(data || []);
-            setLoadingProps(false);
         }
         fetchData();
-    }, [user, loading]);
+    }, [user, loading, forceReady]);
 
-    // LOGOUT HANDLER
     const handleSignOut = async () => {
         await signOut();
-        router.push('/bienvenido'); // Explicit redirect requested by user
+        router.push('/bienvenido');
     };
 
-    // HELPER: Get Avatar URL (Google/Facebook or DB)
+    // AVATAR & NAME LOGIC
     const avatarUrl = user?.user_metadata?.avatar_url || user?.user_metadata?.picture || profile?.avatar_url;
     const displayName = profile?.nombre || user?.user_metadata?.full_name || user?.email?.split('@')[0];
 
-    // LOADING STATE
-    if (loading) {
+    // --- RENDER LOGIC ---
+
+    // 1. SPINNER (Only shows if Auth is loading AND we haven't timed out yet)
+    const showSpinner = loading && !forceReady;
+
+    if (showSpinner) {
         return (
             <div className="flex h-screen items-center justify-center bg-[#F3F4F6]">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
@@ -56,158 +64,220 @@ export default function DashboardPage() {
         );
     }
 
-    // MANUAL AUTH CHECK
-    if (!user) {
+    // 2. NO SESSION (Manual Login - Anti-Loop)
+    // If we forced ready and there's no user, show this screen.
+    if (!user && forceReady && !loading) {
         return (
             <div className="flex h-screen items-center justify-center bg-[#F3F4F6] flex-col gap-4">
-                <h2 className="text-xl font-bold text-slate-800">Sesión Finalizada</h2>
-                <Link href="/auth/login" className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 font-medium">
+                <h2 className="text-xl font-bold text-slate-800" style={{ fontFamily: 'Lufga, sans-serif' }}>Sesión Finalizada</h2>
+                <Link href="/auth/login" className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 font-medium transition-colors">
                     Iniciar Sesión
                 </Link>
             </div>
         );
     }
 
-    // RENDER
+    // 3. DASHBOARD (Matches User's HTML Design)
     return (
-        <div className="relative flex h-screen p-4 gap-4 overflow-hidden font-sans text-slate-800 bg-[#F3F4F6]">
-            <div className="light-mode-blobs"></div>
+        <div className="flex h-screen bg-[#F3F4F6] text-[#111827] font-sans overflow-hidden" style={{ fontFamily: 'Lufga, sans-serif' }}>
+
+            {/* BLOBS BACKGROUND */}
+            <div className="absolute top-[-10%] right-[-5%] w-[500px] h-[500px] bg-blue-400/20 rounded-full blur-[80px] pointer-events-none"></div>
+            <div className="absolute bottom-[-10%] left-[20%] w-[400px] h-[400px] bg-purple-400/20 rounded-full blur-[80px] pointer-events-none"></div>
 
             {/* SIDEBAR */}
-            <aside className="w-64 flex flex-col glass-panel rounded-3xl shadow-sm hidden md:flex transition-all bg-white/60 backdrop-blur-xl border border-white/50">
-                <div className="p-6 flex items-center gap-3">
-                    <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-600/30">
-                        <Home className="w-6 h-6" />
+            <aside className="w-64 bg-white/80 backdrop-blur-md border-r border-gray-200 flex flex-col h-full z-20">
+                <div className="h-20 flex items-center px-6">
+                    <div className="w-10 h-10 relative mr-3">
+                        {/* LOGO: Using Image component as requested */}
+                        <Image src="/Logo solo Nido.png" alt="Nido Logo" fill className="object-contain" />
                     </div>
                     <div>
-                        {/* BRANDING UPDATE */}
-                        <h1 className="font-bold text-lg tracking-tight text-slate-900">NIDO</h1>
-                        <p className="text-xs text-slate-500">Propietario</p>
+                        <h1 className="font-bold text-lg tracking-tight text-[#1A56DB]">NIDO</h1>
+                        <p className="text-xs text-gray-500">Propietario</p>
                     </div>
                 </div>
-                <nav className="flex-1 px-4 space-y-2 py-4">
-                    <a href="#" className="flex items-center gap-3 px-4 py-3 bg-white/50 rounded-xl text-blue-600 font-medium border border-white/40 shadow-sm">
-                        <LayoutDashboard className="w-5 h-5" /> Dashboard
+
+                <nav className="flex-1 px-4 space-y-2 mt-4">
+                    <Link href="/mis-inmuebles" className="flex items-center px-4 py-3 bg-blue-50 text-[#1A56DB] rounded-lg transition-colors group">
+                        <LayoutDashboard className="w-5 h-5 mr-3" />
+                        <span className="font-medium">Dashboard</span>
+                    </Link>
+                    <a href="#" className="flex items-center px-4 py-3 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors group">
+                        <Building className="w-5 h-5 mr-3 group-hover:text-[#1A56DB] transition-colors" />
+                        <span className="font-medium">Mis Propiedades</span>
                     </a>
-                    <a href="#" className="flex items-center gap-3 px-4 py-3 text-slate-600 hover:bg-white/30 rounded-xl transition-all hover:text-slate-900">
-                        <Home className="w-5 h-5" /> Mis Propiedades
+                    <a href="#" className="flex items-center px-4 py-3 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors group">
+                        <BarChart2 className="w-5 h-5 mr-3 group-hover:text-[#1A56DB] transition-colors" />
+                        <span className="font-medium">Analíticas</span>
                     </a>
-                    <a href="#" className="flex items-center gap-3 px-4 py-3 text-slate-600 hover:bg-white/30 rounded-xl transition-all hover:text-slate-900">
-                        <BarChart2 className="w-5 h-5" /> Analíticas
+                    <a href="#" className="flex items-center px-4 py-3 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors group">
+                        <MessageSquare className="w-5 h-5 mr-3 group-hover:text-[#1A56DB] transition-colors" />
+                        <span className="font-medium">Mensajes</span>
                     </a>
-                    <a href="#" className="flex items-center gap-3 px-4 py-3 text-slate-600 hover:bg-white/30 rounded-xl transition-all hover:text-slate-900">
-                        <MessageSquare className="w-5 h-5" /> Mensajes
-                    </a>
+                    <div className="pt-4 mt-4 border-t border-gray-100">
+                        <a href="#" className="flex items-center px-4 py-3 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors group">
+                            <Settings className="w-5 h-5 mr-3 group-hover:text-[#1A56DB] transition-colors" />
+                            <span className="font-medium">Configuración</span>
+                        </a>
+                    </div>
                 </nav>
-                <div className="p-4 space-y-4">
-                    <div className="bg-gradient-to-br from-blue-50/80 to-indigo-50/80 p-4 rounded-2xl border border-white/40 backdrop-blur-sm">
-                        <p className="text-xs font-semibold text-slate-500 mb-2">Soporte Premium</p>
-                        <button className="w-full py-2 bg-blue-600 text-white text-sm font-medium rounded-xl shadow-lg shadow-blue-600/25 hover:bg-blue-700 transition-colors">Contactar</button>
+
+                <div className="p-4 mt-auto">
+                    <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl p-4 border border-blue-100">
+                        <h4 className="text-sm font-semibold text-indigo-900 mb-1">Soporte Premium</h4>
+                        <p className="text-xs text-indigo-700 mb-3 leading-relaxed">¿Necesitas ayuda con tus primeros anuncios?</p>
+                        <button className="w-full bg-[#1A56DB] hover:bg-blue-700 text-white text-xs font-semibold py-2 px-4 rounded-lg transition-colors shadow-sm">
+                            Contactar
+                        </button>
                     </div>
                 </div>
             </aside>
 
             {/* MAIN CONTENT */}
-            <main className="flex-1 flex flex-col h-full overflow-hidden relative rounded-3xl">
-                <header className="h-20 flex items-center justify-between px-1 mb-2">
-                    <div className="relative w-96">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
-                        <input className="w-full bg-white/60 backdrop-blur-md border border-white/40 rounded-full py-2.5 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600/50" placeholder="Buscar propiedades..." type="text" />
+            <main className="flex-1 flex flex-col h-full relative overflow-hidden">
+                {/* HEADER */}
+                <header className="h-20 flex items-center justify-between px-8 z-10 sticky top-0 bg-[#F3F4F6]/80 backdrop-blur-md border-b border-gray-200/50">
+                    <div className="flex-1 max-w-lg">
+                        <div className="relative">
+                            <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                <Search className="text-gray-400 w-5 h-5" />
+                            </span>
+                            <input className="block w-full pl-10 pr-3 py-2.5 border-none rounded-xl leading-5 bg-white text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#1A56DB]/50 sm:text-sm shadow-sm transition-all" placeholder="Buscar propiedades, inquilinos..." type="text" />
+                        </div>
                     </div>
 
-                    <div className="flex items-center gap-4">
-                        <Link href="/publicar/tipo" className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-full font-medium shadow-lg shadow-blue-600/30 flex items-center gap-2">
-                            <PlusCircle className="w-5 h-5" /> Crear Propiedad
+                    <div className="flex items-center space-x-6 ml-6">
+                        <Link href="/publicar/tipo" className="bg-[#1A56DB] hover:bg-blue-700 text-white font-medium py-2.5 px-5 rounded-full flex items-center shadow-lg shadow-blue-500/30 transition-all hover:-translate-y-0.5">
+                            <Plus className="w-4 h-4 mr-2" /> Crear Propiedad
                         </Link>
 
-                        <button className="p-2 bg-white/60 rounded-full text-slate-600 hover:bg-white transition-colors border border-white/40 shadow-sm relative">
-                            <Bell className="w-5 h-5" />
-                            <span className="absolute top-2 right-2.5 w-2 h-2 bg-red-500 rounded-full border border-white"></span>
-                        </button>
-
-                        {/* USER DROPDOWN */}
-                        <div className="relative">
-                            <button
-                                onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                                className="w-10 h-10 rounded-full border-2 border-white shadow-md overflow-hidden cursor-pointer focus:ring-2 focus:ring-blue-400 transition-all relative"
-                            >
-                                {avatarUrl ? (
-                                    <Image
-                                        src={avatarUrl}
-                                        alt="Perfil"
-                                        fill
-                                        className="object-cover"
-                                        referrerPolicy="no-referrer"
-                                    />
-                                ) : (
-                                    <div className="w-full h-full bg-gradient-to-tr from-orange-300 to-amber-200 flex items-center justify-center text-white font-bold">
-                                        {displayName?.[0]?.toUpperCase()}
-                                    </div>
-                                )}
+                        <div className="flex items-center space-x-4 border-l border-gray-200 pl-6">
+                            <button className="relative p-2 text-gray-400 hover:text-gray-500 transition-colors">
+                                <Bell className="w-5 h-5" />
+                                <span className="absolute top-2 right-2 block h-2 w-2 rounded-full bg-red-500 ring-2 ring-white"></span>
                             </button>
 
-                            {/* DROPDOWN MENU */}
-                            {isUserMenuOpen && (
-                                <div className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-50 animation-fade-in">
-                                    <div className="px-4 py-2 border-b border-gray-50">
-                                        <p className="text-sm font-bold text-slate-800 truncate">{displayName}</p>
-                                        <p className="text-xs text-slate-500 truncate">{user.email}</p>
+                            {/* USER DROPDOWN */}
+                            <div className="relative">
+                                <button
+                                    onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+                                    className="flex items-center focus:outline-none"
+                                >
+                                    {avatarUrl ? (
+                                        <div className="relative h-10 w-10">
+                                            <Image src={avatarUrl} alt="Avatar" fill className="rounded-full object-cover border-2 border-white shadow-md" referrerPolicy="no-referrer" />
+                                        </div>
+                                    ) : (
+                                        <div className="h-10 w-10 rounded-full bg-gradient-to-tr from-orange-300 to-amber-200 border-2 border-white shadow-md flex items-center justify-center text-white font-bold">
+                                            {displayName?.[0]?.toUpperCase()}
+                                        </div>
+                                    )}
+                                </button>
+
+                                {/* DROPDOWN MENU */}
+                                {isUserMenuOpen && (
+                                    <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-50 animate-in fade-in zoom-in duration-200">
+                                        <div className="px-4 py-3 border-b border-gray-50">
+                                            <p className="text-sm font-bold text-gray-800 truncate">{displayName}</p>
+                                            <p className="text-xs text-gray-500 truncate">{user?.email}</p>
+                                        </div>
+                                        <button
+                                            onClick={handleSignOut}
+                                            className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 transition-colors"
+                                        >
+                                            <LogOut className="w-4 h-4" /> Cerrar Sesión
+                                        </button>
                                     </div>
-                                    <button
-                                        onClick={handleSignOut}
-                                        className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 transition-colors"
-                                    >
-                                        <LogOut className="w-4 h-4" /> Cerrar Sesión
-                                    </button>
-                                </div>
-                            )}
+                                )}
+                            </div>
                         </div>
                     </div>
                 </header>
 
-                <div className="flex-1 overflow-y-auto pr-2 pb-6">
-                    <div className="mb-8">
-                        <h2 className="text-3xl font-bold text-slate-900 tracking-tight">Panel de Gestión</h2>
-                        <p className="text-slate-500 mt-1">Hola {displayName}, gestiona tus propiedades.</p>
+                <div className="flex-1 overflow-y-auto p-8 relative z-0 flex flex-col items-center">
+                    <div className="text-center mb-10 w-full">
+                        <h2 className="text-3xl font-bold text-[#111827] mb-2">Bienvenido a tu Panel de Gestión</h2>
+                        <p className="text-gray-500 text-lg">Comienza tu viaje inmobiliario publicando tu primera propiedad.</p>
+                    </div>
 
-                        {/* CONTENT GRID */}
-                        {loadingProps ? (
-                            <div className="text-center py-20 text-gray-500">Cargando...</div>
-                        ) : properties.length > 0 ? (
-                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mt-6">
-                                {properties.map(p => (
-                                    <div key={p.id} className="bg-white/60 backdrop-blur-md rounded-3xl overflow-hidden border border-white/50 shadow-sm hover:shadow-md transition-all flex flex-col">
-                                        <div className="relative h-56 bg-gray-200">
-                                            {p.imagenes?.[0]?.url && (
-                                                <Image src={p.imagenes[0].url} alt={p.titulo} fill className="object-cover" />
-                                            )}
-                                            <div className="absolute top-4 left-4 bg-emerald-500/90 text-white text-[10px] font-bold px-3 py-1 rounded-full border border-emerald-400/50 shadow-sm">
-                                                {p.estado === 'publicado' ? 'PUBLICADO' : 'BORRADOR'}
-                                            </div>
-                                        </div>
-                                        <div className="p-5 flex-1 flex flex-col">
-                                            <h3 className="font-bold text-lg text-slate-800 truncate">{p.titulo}</h3>
-                                            <p className="font-bold text-blue-600 text-lg">${new Intl.NumberFormat('es-CO').format(p.precio_venta || p.precio_arriendo || 0)}</p>
-                                            <div className="flex items-center text-slate-500 text-xs mb-4 mt-1">
-                                                <MapPin className="w-4 h-4 mr-1" /> {p.ubicacion_municipio}
-                                            </div>
-                                            <div className="mt-auto flex gap-3">
-                                                <button className="flex-1 py-2 rounded-full bg-blue-600 text-white text-sm font-medium">Ver Detalles</button>
-                                            </div>
+                    {/* EMPTY STATE CARD (Glassmorphism) */}
+                    <div className="w-full max-w-4xl rounded-3xl p-1 relative overflow-hidden transition-transform duration-500 hover:scale-[1.01]" style={{ background: 'rgba(255, 255, 255, 0.7)', backdropFilter: 'blur(12px)', border: '1px solid rgba(255, 255, 255, 0.4)', boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.07)' }}>
+                        <div className="bg-white/50 rounded-[20px] p-10 md:p-16 flex flex-col md:flex-row items-center gap-12 backdrop-blur-sm">
+                            <div className="flex-1 text-center md:text-left z-10">
+                                <div className="inline-flex items-center justify-center p-3 bg-blue-100 rounded-2xl mb-6 shadow-inner">
+                                    <Home className="text-[#1A56DB] w-8 h-8" />
+                                </div>
+                                <h3 className="text-2xl font-bold text-gray-900 mb-4">Tu portfolio está vacío</h3>
+                                <p className="text-gray-600 mb-8 leading-relaxed">
+                                    Gestiona alquileres, ventas y mantenimientos desde un único lugar. Nuestra IA te ayudará a optimizar tus anuncios para obtener el mejor rendimiento.
+                                </p>
+                                <div className="flex flex-col sm:flex-row gap-4 justify-center md:justify-start">
+                                    <Link href="/publicar/tipo" className="group relative flex items-center justify-center py-4 px-8 bg-[#1A56DB] hover:bg-blue-700 text-white rounded-full font-semibold shadow-lg shadow-blue-500/25 transition-all hover:-translate-y-1 overflow-hidden">
+                                        <Plus className="w-5 h-5 mr-2" /> Publicar Inmueble
+                                    </Link>
+                                    <button className="flex items-center justify-center py-4 px-8 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 rounded-full font-medium transition-all">
+                                        <PlayCircle className="w-5 h-5 mr-2 text-gray-400" /> Ver Tutorial
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* ILLUSTRATION PLACEHOLDER */}
+                            <div className="flex-1 relative w-full max-w-md h-64 md:h-80 flex items-center justify-center">
+                                <div className="absolute top-0 right-10 w-32 h-32 bg-yellow-200 rounded-full blur-2xl opacity-60 animate-pulse"></div>
+                                <div className="absolute bottom-0 left-10 w-40 h-40 bg-pink-200 rounded-full blur-2xl opacity-60"></div>
+                                <div className="relative z-10 w-full h-full bg-gradient-to-tr from-gray-100 to-gray-50 rounded-2xl shadow-2xl flex flex-col items-center justify-center overflow-hidden border border-white/50">
+                                    <div className="relative">
+                                        <div className="absolute inset-0 bg-[#1A56DB] blur-xl opacity-20"></div>
+                                        <Home className="w-24 h-24 text-gray-300 drop-shadow-sm" />
+                                        <div className="absolute -top-2 -right-6 bg-white px-3 py-1 rounded-full shadow-lg border border-gray-100 animate-bounce">
+                                            <span className="text-xs font-bold text-[#1A56DB]">Nuevo</span>
                                         </div>
                                     </div>
-                                ))}
+                                    <div className="w-2/3 space-y-3 mt-6 opacity-50">
+                                        <div className="h-2 bg-gray-300 rounded-full w-full"></div>
+                                        <div className="h-2 bg-gray-300 rounded-full w-3/4 mx-auto"></div>
+                                    </div>
+                                </div>
                             </div>
-                        ) : (
-                            /* EMPTY STATE GLASS */
-                            <div className="bg-white/40 backdrop-blur-md rounded-3xl p-12 text-center border border-white/50 mt-6">
-                                <Home className="w-16 h-16 text-blue-600 mx-auto mb-4" />
-                                <h3 className="text-2xl font-bold text-slate-900 mb-2">Tu portfolio está vacío</h3>
-                                <Link href="/publicar/tipo" className="inline-flex items-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-xl font-medium shadow-lg hover:bg-blue-700 mt-4">
-                                    <PlusCircle className="w-5 h-5" /> Publicar Inmueble
-                                </Link>
+                        </div>
+                    </div>
+
+                    {/* BOTTOM CARDS */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-10 w-full max-w-4xl">
+                        <div className="bg-white/40 p-5 rounded-2xl hover:bg-white/60 transition-colors cursor-pointer group border border-white/40 shadow-sm backdrop-blur-sm">
+                            <div className="flex items-center mb-2">
+                                <div className="p-2 bg-green-100 rounded-lg mr-3 group-hover:scale-110 transition-transform">
+                                    <ShieldCheck className="text-green-600 w-5 h-5" />
+                                </div>
+                                <h4 className="font-semibold text-sm text-gray-800">Verificación de Identidad</h4>
                             </div>
-                        )}
+                            <p className="text-xs text-gray-500">Completa tu perfil para ganar confianza.</p>
+                        </div>
+
+                        <div className="bg-white/40 p-5 rounded-2xl hover:bg-white/60 transition-colors cursor-pointer group border border-white/40 shadow-sm backdrop-blur-sm">
+                            <div className="flex items-center mb-2">
+                                <div className="p-2 bg-purple-100 rounded-lg mr-3 group-hover:scale-110 transition-transform">
+                                    <CreditCard className="text-purple-600 w-5 h-5" />
+                                </div>
+                                <h4 className="font-semibold text-sm text-gray-800">Métodos de Cobro</h4>
+                            </div>
+                            <p className="text-xs text-gray-500">Configura cómo recibirás tus rentas.</p>
+                        </div>
+
+                        <div className="bg-white/40 p-5 rounded-2xl hover:bg-white/60 transition-colors cursor-pointer group border border-white/40 shadow-sm backdrop-blur-sm">
+                            <div className="flex items-center mb-2">
+                                <div className="p-2 bg-orange-100 rounded-lg mr-3 group-hover:scale-110 transition-transform">
+                                    <Users className="text-orange-600 w-5 h-5" />
+                                </div>
+                                <h4 className="font-semibold text-sm text-gray-800">Invitar Equipo</h4>
+                            </div>
+                            <p className="text-xs text-gray-500">Añade administradores a tu cuenta.</p>
+                        </div>
+                    </div>
+
+                    <div className="mt-auto pt-10 text-center pb-4">
+                        <p className="text-xs text-gray-500">© 2024 NIDO Real Estate. Todos los derechos reservados.</p>
                     </div>
                 </div>
             </main>
