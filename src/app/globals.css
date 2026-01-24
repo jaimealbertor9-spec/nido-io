@@ -2,73 +2,58 @@
 @tailwind components;
 @tailwind utilities;
 
-/* RESTORED ORIGINAL FONTS */
-@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+/* 1. LUFGA FONT SETUP */
+@font-face {
+  font-family: 'Lufga';
+  src: url('/fonts/Lufga-Regular.otf') format('opentype'),
+    url('/fonts/Lufga-Regular.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
 
-/* Force pure white background - no gradients */
 body {
-  background-color: #ffffff !important;
-  color: #1F2937;
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: 'Lufga', 'Plus Jakarta Sans', sans-serif;
+  /* Priority to Lufga */
+  background-color: #F3F4F6;
+  color: #1e293b;
 }
 
-h1,
-h2,
-h3,
-h4,
-h5,
-h6 {
-  font-family: 'Fredoka', sans-serif;
+/* 2. USER'S GLASS STYLES */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
 }
 
-/* Animaciones suaves */
-@layer utilities {
-  .animate-fade-in {
-    animation: fadeIn 0.3s ease-in-out;
-  }
-
-  .animate-slide-up {
-    animation: slideUp 0.4s ease-out;
-  }
+.light-mode-blobs {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: -1;
+  background:
+    radial-gradient(circle at 15% 50%, rgba(37, 99, 235, 0.08), transparent 25%),
+    radial-gradient(circle at 85% 30%, rgba(236, 72, 153, 0.08), transparent 25%);
+  pointer-events: none;
 }
 
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
 }
 
-@keyframes slideUp {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 
-/* Estilos para inputs y botones */
-@layer components {
-  .input-base {
-    @apply w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-nido-700 focus:border-transparent transition-all duration-200;
-  }
+::-webkit-scrollbar-thumb {
+  background: rgba(156, 163, 175, 0.5);
+  border-radius: 10px;
+}
 
-  .btn-primary {
-    @apply px-6 py-3 bg-nido-700 text-white font-semibold rounded-xl hover:bg-nido-800 active:bg-nido-900 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-nido-700/20;
-  }
-
-  .btn-secondary {
-    @apply px-6 py-3 bg-nido-50 text-nido-700 font-semibold rounded-xl hover:bg-nido-100 active:bg-nido-200 transition-all duration-200;
-  }
-
-  .btn-accent {
-    @apply px-6 py-3 bg-accent-500 text-white font-semibold rounded-xl hover:bg-accent-600 active:bg-accent-700 transition-all duration-200 shadow-lg shadow-accent-500/20;
-  }
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(156, 163, 175, 0.8);
 }
