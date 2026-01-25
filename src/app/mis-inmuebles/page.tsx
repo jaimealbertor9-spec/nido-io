@@ -15,10 +15,10 @@ export default function DashboardPage() {
     const { user, loading, profile, signOut } = useAuth();
     const router = useRouter();
     const [properties, setProperties] = useState<any[]>([]);
-    const [loadingProps, setLoadingProps] = useState(false); // Restore loading state
+    const [loadingProps, setLoadingProps] = useState(false);
     const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
-    // FAILSAFE: Force render after 1.5s
+    // FAILSAFE: Lógica Anti-Loop INTACTA (1.5 segundos)
     const [forceReady, setForceReady] = useState(false);
 
     useEffect(() => {
@@ -26,19 +26,31 @@ export default function DashboardPage() {
         return () => clearTimeout(timer);
     }, []);
 
-    // DATA FETCHING
+    // DATA FETCHING (Corregido según Auditoría Técnica)
     useEffect(() => {
         if ((loading && !forceReady) || !user) return;
+
         async function fetchData() {
-            setLoadingProps(true); // Start loading
-            const { data } = await supabase
-                .from('inmuebles')
-                .select('*, imagenes(*)')
-                .eq('propietario_id', user.id)
-                .order('created_at', { ascending: false });
-            setProperties(data || []);
-            setLoadingProps(false); // End loading
+            try {
+                setLoadingProps(true);
+                // CORRECCIÓN 1: Usar nombre real de tabla 'inmueble_imagenes'
+                const { data, error } = await supabase
+                    .from('inmuebles')
+                    .select('*, inmueble_imagenes(*)')
+                    .eq('propietario_id', user.id)
+                    .order('created_at', { ascending: false });
+
+                if (error) throw error;
+
+                setProperties(data || []);
+            } catch (err) {
+                console.error('Error cargando inmuebles:', err);
+            } finally {
+                // Asegura que el loading se apague siempre
+                setLoadingProps(false);
+            }
         }
+
         fetchData();
     }, [user, loading, forceReady]);
 
@@ -49,9 +61,9 @@ export default function DashboardPage() {
 
     const avatarUrl = user?.user_metadata?.avatar_url || user?.user_metadata?.picture || profile?.avatar_url;
     const displayName = profile?.nombre || user?.user_metadata?.full_name || user?.email?.split('@')[0];
-
     const showSpinner = loading && !forceReady;
 
+    // 1. SPINNER
     if (showSpinner) {
         return (
             <div className="flex h-screen items-center justify-center bg-[#F3F4F6]">
@@ -60,7 +72,7 @@ export default function DashboardPage() {
         );
     }
 
-    // MANUAL AUTH CHECK (Anti-Loop)
+    // 2. NO SESSION (Anti-Loop)
     if (!user && forceReady && !loading) {
         return (
             <div className="flex h-screen items-center justify-center bg-[#F3F4F6] flex-col gap-4">
@@ -71,6 +83,38 @@ export default function DashboardPage() {
             </div>
         );
     }
+
+    // HELPER: Badge de Estado
+    const getStatusBadge = (estado: string | null) => {
+        const status = estado?.toLowerCase() || 'borrador';
+        switch (status) {
+            case 'publicado':
+                return { label: 'PUBLICADO', classes: 'bg-emerald-500/90 border-emerald-400/50' };
+            case 'en_revision':
+                return { label: 'EN REVISIÓN', classes: 'bg-amber-500/90 border-amber-400/50' };
+            default:
+                return { label: 'BORRADOR', classes: 'bg-slate-500/90 border-slate-400/50' };
+        }
+    };
+
+    // HELPER: Lógica Inteligente de Portada (Fachada > Primera)
+    const getCoverImage = (p: any) => {
+        const images = p.inmueble_imagenes;
+        if (!Array.isArray(images) || images.length === 0) return null;
+
+        // Prioridad 1: Buscar imagen con categoría 'fachada'
+        const fachada = images.find((img: any) => img.category === 'fachada' || img.etiqueta === 'fachada');
+        if (fachada) return fachada.url;
+
+        // Prioridad 2: La primera que encuentre
+        return images[0].url;
+    };
+
+    // HELPER: Formateo de Precio (Soporta 'precio' y 'precio_venta')
+    const getPrice = (p: any) => {
+        const val = p.precio || p.precio_venta || p.precio_arriendo || 0;
+        return new Intl.NumberFormat('es-CO').format(val);
+    };
 
     return (
         <div className="flex h-screen bg-[#F3F4F6] text-[#111827] font-sans overflow-hidden" style={{ fontFamily: 'Lufga, sans-serif' }}>
@@ -164,31 +208,36 @@ export default function DashboardPage() {
                     ) : properties.length > 0 ? (
                         /* PROPERTIES GRID (Glassmorphism) */
                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 w-full max-w-6xl">
-                            {properties.map(p => (
-                                <div key={p.id} className="bg-white/40 p-0 rounded-3xl hover:bg-white/60 transition-all border border-white/40 shadow-sm backdrop-blur-sm overflow-hidden flex flex-col group hover:-translate-y-1">
-                                    <div className="relative h-56 bg-gray-200">
-                                        {p.imagenes?.[0]?.url ? (
-                                            <Image src={p.imagenes[0].url} alt={p.titulo} fill className="object-cover transition-transform duration-700 group-hover:scale-105" />
-                                        ) : (
-                                            <div className="w-full h-full flex items-center justify-center text-gray-400"><Home className="w-12 h-12" /></div>
-                                        )}
-                                        <div className={`absolute top-4 left-4 text-white text-[10px] font-bold px-3 py-1 rounded-full border shadow-sm ${p.estado === 'publicado' ? 'bg-emerald-500/90 border-emerald-400/50' : 'bg-slate-500/90 border-slate-400/50'}`}>
-                                            {p.estado === 'publicado' ? 'PUBLICADO' : 'BORRADOR'}
+                            {properties.map(p => {
+                                const badge = getStatusBadge(p.estado);
+                                const coverUrl = getCoverImage(p);
+
+                                return (
+                                    <div key={p.id} className="bg-white/40 p-0 rounded-3xl hover:bg-white/60 transition-all border border-white/40 shadow-sm backdrop-blur-sm overflow-hidden flex flex-col group hover:-translate-y-1">
+                                        <div className="relative h-56 bg-gray-200">
+                                            {coverUrl ? (
+                                                <Image src={coverUrl} alt={p.titulo || 'Propiedad'} fill className="object-cover transition-transform duration-700 group-hover:scale-105" />
+                                            ) : (
+                                                <div className="w-full h-full flex items-center justify-center text-gray-400"><Home className="w-12 h-12" /></div>
+                                            )}
+                                            <div className={`absolute top-4 left-4 text-white text-[10px] font-bold px-3 py-1 rounded-full border shadow-sm ${badge.classes}`}>
+                                                {badge.label}
+                                            </div>
+                                        </div>
+                                        <div className="p-5 flex-1 flex flex-col">
+                                            <h3 className="font-bold text-lg text-slate-800 truncate mb-1">{p.titulo || 'Sin título'}</h3>
+                                            <p className="font-bold text-[#1A56DB] text-lg mb-2">${getPrice(p)}</p>
+                                            <div className="flex items-center text-slate-500 text-xs mb-4">
+                                                <MapPin className="w-4 h-4 mr-1" /> {p.ciudad || p.ubicacion_municipio || 'Sin ubicación'}
+                                            </div>
+                                            <div className="mt-auto flex gap-3">
+                                                <button className="flex-1 py-2.5 rounded-full bg-[#1A56DB] text-white text-sm font-medium hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/20">Ver Detalles</button>
+                                                <button className="w-10 h-10 flex items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:bg-white transition-colors"><MoreHorizontal className="w-5 h-5" /></button>
+                                            </div>
                                         </div>
                                     </div>
-                                    <div className="p-5 flex-1 flex flex-col">
-                                        <h3 className="font-bold text-lg text-slate-800 truncate mb-1">{p.titulo}</h3>
-                                        <p className="font-bold text-[#1A56DB] text-lg mb-2">${new Intl.NumberFormat('es-CO').format(p.precio_venta || p.precio_arriendo || 0)}</p>
-                                        <div className="flex items-center text-slate-500 text-xs mb-4">
-                                            <MapPin className="w-4 h-4 mr-1" /> {p.ubicacion_municipio || 'Sin ubicación'}
-                                        </div>
-                                        <div className="mt-auto flex gap-3">
-                                            <button className="flex-1 py-2.5 rounded-full bg-[#1A56DB] text-white text-sm font-medium hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/20">Ver Detalles</button>
-                                            <button className="w-10 h-10 flex items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:bg-white transition-colors"><MoreHorizontal className="w-5 h-5" /></button>
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     ) : (
                         /* EMPTY STATE CARD (Fallback) */
