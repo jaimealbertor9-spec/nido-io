@@ -2,12 +2,12 @@
 
 import { useAuth } from '@/components/AuthProvider';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import {
     LayoutDashboard, Building, BarChart2, MessageSquare, Settings,
-    Search, Plus, Bell, Home, PlayCircle, ShieldCheck, CreditCard, Users, LogOut, MapPin, MoreHorizontal
+    Search, Plus, Bell, Home, PlayCircle, ShieldCheck, CreditCard, Users, LogOut, MapPin, MoreHorizontal, Eye, FileText, CheckCircle, Clock
 } from 'lucide-react';
 import Image from 'next/image';
 
@@ -18,6 +18,9 @@ export default function DashboardPage() {
     const [loadingProps, setLoadingProps] = useState(false);
     const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
+    // ESTADO PARA FILTROS
+    const [currentFilter, setCurrentFilter] = useState<'todos' | 'publicado' | 'en_revision' | 'borrador'>('todos');
+
     // FAILSAFE: Lógica Anti-Loop INTACTA (1.5 segundos)
     const [forceReady, setForceReady] = useState(false);
 
@@ -26,14 +29,17 @@ export default function DashboardPage() {
         return () => clearTimeout(timer);
     }, []);
 
-    // DATA FETCHING (Corregido según Auditoría Técnica)
+    // DATA FETCHING (Optimizado para evitar recargas al cambiar de pestaña)
     useEffect(() => {
-        if ((loading && !forceReady) || !user) return;
+        // Si no hay usuario aún, esperamos. PERO si ya cargó propiedades, no volvemos a cargar por un simple cambio de foco.
+        if (!user) return;
+        if (properties.length > 0) return; // Evita recarga si ya hay datos
 
         async function fetchData() {
+            if (!user) return; // TypeScript guard
             try {
                 setLoadingProps(true);
-                // CORRECCIÓN 1: Usar nombre real de tabla 'inmueble_imagenes'
+                // Consulta a tabla REAL 'inmueble_imagenes'
                 const { data, error } = await supabase
                     .from('inmuebles')
                     .select('*, inmueble_imagenes(*)')
@@ -46,18 +52,36 @@ export default function DashboardPage() {
             } catch (err) {
                 console.error('Error cargando inmuebles:', err);
             } finally {
-                // Asegura que el loading se apague siempre
                 setLoadingProps(false);
             }
         }
 
         fetchData();
-    }, [user, loading, forceReady]);
+    }, [user, forceReady]); // Quitamos 'loading' de dependencias para evitar el bug de pestañas
 
     const handleSignOut = async () => {
         await signOut();
         router.push('/bienvenidos');
     };
+
+    // CÁLCULO DE ESTADÍSTICAS
+    const stats = useMemo(() => {
+        const total = properties.length;
+        const publicados = properties.filter(p => p.estado === 'publicado').length;
+        // Asumimos columna 'vistas' o 'visualizaciones', si no existe suma 0
+        const vistas = properties.reduce((acc, p) => acc + (p.vistas || p.visualizaciones || 0), 0);
+        return { total, publicados, vistas };
+    }, [properties]);
+
+    // FILTRADO DE PROPIEDADES
+    const filteredProperties = useMemo(() => {
+        if (currentFilter === 'todos') return properties;
+        return properties.filter(p => {
+            const estado = p.estado?.toLowerCase() || 'borrador';
+            if (currentFilter === 'borrador') return estado === 'borrador';
+            return estado === currentFilter;
+        });
+    }, [properties, currentFilter]);
 
     const avatarUrl = user?.user_metadata?.avatar_url || user?.user_metadata?.picture || profile?.avatar_url;
     const displayName = profile?.nombre || user?.user_metadata?.full_name || user?.email?.split('@')[0];
@@ -97,20 +121,15 @@ export default function DashboardPage() {
         }
     };
 
-    // HELPER: Lógica Inteligente de Portada (Fachada > Primera)
+    // HELPER: Portada Inteligente
     const getCoverImage = (p: any) => {
         const images = p.inmueble_imagenes;
         if (!Array.isArray(images) || images.length === 0) return null;
-
-        // Prioridad 1: Buscar imagen con categoría 'fachada'
+        // Prioridad: Fachada -> Primera
         const fachada = images.find((img: any) => img.category === 'fachada' || img.etiqueta === 'fachada');
-        if (fachada) return fachada.url;
-
-        // Prioridad 2: La primera que encuentre
-        return images[0].url;
+        return fachada ? fachada.url : images[0].url;
     };
 
-    // HELPER: Formateo de Precio (Soporta 'precio' y 'precio_venta')
     const getPrice = (p: any) => {
         const val = p.precio || p.precio_venta || p.precio_arriendo || 0;
         return new Intl.NumberFormat('es-CO').format(val);
@@ -197,20 +216,76 @@ export default function DashboardPage() {
                 </header>
 
                 <div className="flex-1 overflow-y-auto p-8 relative z-0 flex flex-col items-center">
-                    <div className="text-center mb-10 w-full">
+                    <div className="text-center mb-8 w-full max-w-6xl">
                         <h2 className="text-3xl font-bold text-[#111827] mb-2">Bienvenido a tu Panel de Gestión</h2>
-                        <p className="text-gray-500 text-lg">Hola {displayName}, gestiona tus propiedades.</p>
+                        <p className="text-gray-500 text-lg mb-8">Hola {displayName}, aquí tienes el resumen de tu cuenta.</p>
+
+                        {/* STATS CARDS (NUEVO) */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                            <div className="bg-white/60 p-5 rounded-2xl border border-white/50 shadow-sm backdrop-blur-md flex items-center justify-between">
+                                <div>
+                                    <p className="text-sm text-gray-500 font-medium mb-1">Total Propiedades</p>
+                                    <h3 className="text-3xl font-bold text-[#1A56DB]">{stats.total}</h3>
+                                </div>
+                                <div className="p-3 bg-blue-100 rounded-xl">
+                                    <Home className="w-6 h-6 text-[#1A56DB]" />
+                                </div>
+                            </div>
+                            <div className="bg-white/60 p-5 rounded-2xl border border-white/50 shadow-sm backdrop-blur-md flex items-center justify-between">
+                                <div>
+                                    <p className="text-sm text-gray-500 font-medium mb-1">Anuncios Publicados</p>
+                                    <h3 className="text-3xl font-bold text-emerald-600">{stats.publicados}</h3>
+                                </div>
+                                <div className="p-3 bg-emerald-100 rounded-xl">
+                                    <CheckCircle className="w-6 h-6 text-emerald-600" />
+                                </div>
+                            </div>
+                            <div className="bg-white/60 p-5 rounded-2xl border border-white/50 shadow-sm backdrop-blur-md flex items-center justify-between">
+                                <div>
+                                    <p className="text-sm text-gray-500 font-medium mb-1">Total Visualizaciones</p>
+                                    <h3 className="text-3xl font-bold text-purple-600">{new Intl.NumberFormat('es-CO').format(stats.vistas)}</h3>
+                                </div>
+                                <div className="p-3 bg-purple-100 rounded-xl">
+                                    <Eye className="w-6 h-6 text-purple-600" />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* FILTROS EN LÍNEA (NUEVO) */}
+                        <div className="flex items-center space-x-2 border-b border-gray-200 pb-1 mb-6 overflow-x-auto">
+                            {[
+                                { id: 'todos', label: 'Todas las propiedades' },
+                                { id: 'publicado', label: 'Publicadas' },
+                                { id: 'en_revision', label: 'En revisión' },
+                                { id: 'borrador', label: 'Borradores' }
+                            ].map((tab) => (
+                                <button
+                                    key={tab.id}
+                                    onClick={() => setCurrentFilter(tab.id as any)}
+                                    className={`px-4 py-3 text-sm font-medium transition-colors whitespace-nowrap relative ${currentFilter === tab.id
+                                        ? 'text-[#1A56DB]'
+                                        : 'text-gray-500 hover:text-gray-700'
+                                        }`}
+                                >
+                                    {tab.label}
+                                    {currentFilter === tab.id && (
+                                        <div className="absolute bottom-[-1px] left-0 w-full h-0.5 bg-[#1A56DB] rounded-t-full"></div>
+                                    )}
+                                </button>
+                            ))}
+                        </div>
                     </div>
 
                     {/* DYNAMIC CONTENT AREA */}
                     {loadingProps ? (
                         <div className="text-center py-20 text-gray-400 animate-pulse">Cargando inmuebles...</div>
-                    ) : properties.length > 0 ? (
-                        /* PROPERTIES GRID (Glassmorphism) */
+                    ) : filteredProperties.length > 0 ? (
+                        /* PROPERTIES GRID */
                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 w-full max-w-6xl">
-                            {properties.map(p => {
+                            {filteredProperties.map(p => {
                                 const badge = getStatusBadge(p.estado);
                                 const coverUrl = getCoverImage(p);
+                                const isEnRevision = p.estado === 'en_revision';
 
                                 return (
                                     <div key={p.id} className="bg-white/40 p-0 rounded-3xl hover:bg-white/60 transition-all border border-white/40 shadow-sm backdrop-blur-sm overflow-hidden flex flex-col group hover:-translate-y-1">
@@ -227,6 +302,17 @@ export default function DashboardPage() {
                                         <div className="p-5 flex-1 flex flex-col">
                                             <h3 className="font-bold text-lg text-slate-800 truncate mb-1">{p.titulo || 'Sin título'}</h3>
                                             <p className="font-bold text-[#1A56DB] text-lg mb-2">${getPrice(p)}</p>
+
+                                            {/* AVISO DE CALIDAD (NUEVO) */}
+                                            {isEnRevision && (
+                                                <div className="bg-amber-50 border border-amber-100 rounded-lg p-3 mb-3 flex items-start gap-2 animate-in fade-in duration-300">
+                                                    <Clock className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                                                    <p className="text-xs text-amber-800 leading-snug">
+                                                        Tu anuncio está siendo revisado por nuestro equipo de calidad. Estará activo en menos de 24H.
+                                                    </p>
+                                                </div>
+                                            )}
+
                                             <div className="flex items-center text-slate-500 text-xs mb-4">
                                                 <MapPin className="w-4 h-4 mr-1" /> {p.ciudad || p.ubicacion_municipio || 'Sin ubicación'}
                                             </div>
@@ -240,42 +326,33 @@ export default function DashboardPage() {
                             })}
                         </div>
                     ) : (
-                        /* EMPTY STATE CARD (Fallback) */
+                        /* EMPTY STATE (Solo si no hay nada en el filtro actual) */
                         <div className="w-full max-w-4xl rounded-3xl p-1 relative overflow-hidden transition-transform duration-500 hover:scale-[1.01]" style={{ background: 'rgba(255, 255, 255, 0.7)', backdropFilter: 'blur(12px)', border: '1px solid rgba(255, 255, 255, 0.4)', boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.07)' }}>
                             <div className="bg-white/50 rounded-[20px] p-10 md:p-16 flex flex-col md:flex-row items-center gap-12 backdrop-blur-sm">
                                 <div className="flex-1 text-center md:text-left z-10">
                                     <div className="inline-flex items-center justify-center p-3 bg-blue-100 rounded-2xl mb-6 shadow-inner">
-                                        <Home className="text-[#1A56DB] w-8 h-8" />
+                                        <FileText className="text-[#1A56DB] w-8 h-8" />
                                     </div>
-                                    <h3 className="text-2xl font-bold text-gray-900 mb-4">Tu portfolio está vacío</h3>
+                                    <h3 className="text-2xl font-bold text-gray-900 mb-4">No hay propiedades aquí</h3>
                                     <p className="text-gray-600 mb-8 leading-relaxed">
-                                        Gestiona alquileres, ventas y mantenimientos desde un único lugar. Nuestra IA te ayudará a optimizar tus anuncios para obtener el mejor rendimiento.
+                                        {currentFilter === 'todos'
+                                            ? 'Aún no has creado ninguna propiedad. ¡Comienza ahora!'
+                                            : `No tienes propiedades en estado "${currentFilter}".`}
                                     </p>
-                                    <div className="flex flex-col sm:flex-row gap-4 justify-center md:justify-start">
-                                        <Link href="/publicar/tipo" className="group relative flex items-center justify-center py-4 px-8 bg-[#1A56DB] hover:bg-blue-700 text-white rounded-full font-semibold shadow-lg shadow-blue-500/25 transition-all hover:-translate-y-1 overflow-hidden">
-                                            <Plus className="w-5 h-5 mr-2" /> Publicar Inmueble
-                                        </Link>
-                                        <button className="flex items-center justify-center py-4 px-8 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 rounded-full font-medium transition-all">
-                                            <PlayCircle className="w-5 h-5 mr-2 text-gray-400" /> Ver Tutorial
-                                        </button>
-                                    </div>
-                                </div>
-                                <div className="flex-1 relative w-full max-w-md h-64 md:h-80 flex items-center justify-center">
-                                    <div className="absolute top-0 right-10 w-32 h-32 bg-yellow-200 rounded-full blur-2xl opacity-60 animate-pulse"></div>
-                                    <div className="absolute bottom-0 left-10 w-40 h-40 bg-pink-200 rounded-full blur-2xl opacity-60"></div>
-                                    <div className="relative z-10 w-full h-full bg-gradient-to-tr from-gray-100 to-gray-50 rounded-2xl shadow-2xl flex flex-col items-center justify-center overflow-hidden border border-white/50">
-                                        <div className="relative">
-                                            <div className="absolute inset-0 bg-[#1A56DB] blur-xl opacity-20"></div>
-                                            <Home className="w-24 h-24 text-gray-300 drop-shadow-sm" />
+                                    {currentFilter === 'todos' && (
+                                        <div className="flex flex-col sm:flex-row gap-4 justify-center md:justify-start">
+                                            <Link href="/publicar/tipo" className="group relative flex items-center justify-center py-4 px-8 bg-[#1A56DB] hover:bg-blue-700 text-white rounded-full font-semibold shadow-lg shadow-blue-500/25 transition-all hover:-translate-y-1 overflow-hidden">
+                                                <Plus className="w-5 h-5 mr-2" /> Publicar Inmueble
+                                            </Link>
                                         </div>
-                                    </div>
+                                    )}
                                 </div>
                             </div>
                         </div>
                     )}
 
                     {/* BOTTOM CARDS */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-10 w-full max-w-4xl pb-8">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-10 w-full max-w-6xl pb-8">
                         <div className="bg-white/40 p-5 rounded-2xl hover:bg-white/60 transition-colors cursor-pointer group border border-white/40 shadow-sm backdrop-blur-sm">
                             <div className="flex items-center mb-2">
                                 <div className="p-2 bg-green-100 rounded-lg mr-3 group-hover:scale-110 transition-transform"><ShieldCheck className="text-green-600 w-5 h-5" /></div>
