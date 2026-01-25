@@ -2,7 +2,7 @@
 
 import { useAuth } from '@/components/AuthProvider';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import {
@@ -17,6 +17,7 @@ export default function DashboardPage() {
     const [properties, setProperties] = useState<any[]>([]);
     const [loadingProps, setLoadingProps] = useState(false);
     const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+    const hasFetchedRef = useRef(false);
 
     // ESTADO PARA FILTROS
     const [currentFilter, setCurrentFilter] = useState<'todos' | 'publicado' | 'en_revision' | 'borrador'>('todos');
@@ -29,17 +30,20 @@ export default function DashboardPage() {
         return () => clearTimeout(timer);
     }, []);
 
-    // DATA FETCHING (Optimizado para evitar recargas al cambiar de pestaña)
+    // DATA FETCHING (Optimizado y Limpio)
     useEffect(() => {
-        // Si no hay usuario aún, esperamos. PERO si ya cargó propiedades, no volvemos a cargar por un simple cambio de foco.
         if (!user) return;
-        if (properties.length > 0) return; // Evita recarga si ya hay datos
+        if (hasFetchedRef.current) return;
 
         async function fetchData() {
-            if (!user) return; // TypeScript guard
             try {
+                // Validación extra para TypeScript
+                if (!user) return;
+
                 setLoadingProps(true);
-                // Consulta a tabla REAL 'inmueble_imagenes'
+                hasFetchedRef.current = true;
+
+                // Consulta a tabla REAL 'inmueble_imagenes' sin hints conflictivos
                 const { data, error } = await supabase
                     .from('inmuebles')
                     .select('*, inmueble_imagenes(*)')
@@ -51,13 +55,14 @@ export default function DashboardPage() {
                 setProperties(data || []);
             } catch (err) {
                 console.error('Error cargando inmuebles:', err);
+                hasFetchedRef.current = false; // Permitir reintento en caso de error real
             } finally {
                 setLoadingProps(false);
             }
         }
 
         fetchData();
-    }, [user, forceReady]); // Quitamos 'loading' de dependencias para evitar el bug de pestañas
+    }, [user]);
 
     const handleSignOut = async () => {
         await signOut();
@@ -68,7 +73,6 @@ export default function DashboardPage() {
     const stats = useMemo(() => {
         const total = properties.length;
         const publicados = properties.filter(p => p.estado === 'publicado').length;
-        // Asumimos columna 'vistas' o 'visualizaciones', si no existe suma 0
         const vistas = properties.reduce((acc, p) => acc + (p.vistas || p.visualizaciones || 0), 0);
         return { total, publicados, vistas };
     }, [properties]);
@@ -220,7 +224,7 @@ export default function DashboardPage() {
                         <h2 className="text-3xl font-bold text-[#111827] mb-2">Bienvenido a tu Panel de Gestión</h2>
                         <p className="text-gray-500 text-lg mb-8">Hola {displayName}, aquí tienes el resumen de tu cuenta.</p>
 
-                        {/* STATS CARDS (NUEVO) */}
+                        {/* STATS CARDS */}
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                             <div className="bg-white/60 p-5 rounded-2xl border border-white/50 shadow-sm backdrop-blur-md flex items-center justify-between">
                                 <div>
@@ -251,7 +255,7 @@ export default function DashboardPage() {
                             </div>
                         </div>
 
-                        {/* FILTROS EN LÍNEA (NUEVO) */}
+                        {/* FILTROS EN LÍNEA */}
                         <div className="flex items-center space-x-2 border-b border-gray-200 pb-1 mb-6 overflow-x-auto">
                             {[
                                 { id: 'todos', label: 'Todas las propiedades' },
@@ -291,7 +295,7 @@ export default function DashboardPage() {
                                     <div key={p.id} className="bg-white/40 p-0 rounded-3xl hover:bg-white/60 transition-all border border-white/40 shadow-sm backdrop-blur-sm overflow-hidden flex flex-col group hover:-translate-y-1">
                                         <div className="relative h-56 bg-gray-200">
                                             {coverUrl ? (
-                                                <Image src={coverUrl} alt={p.titulo || 'Propiedad'} fill className="object-cover transition-transform duration-700 group-hover:scale-105" />
+                                                <Image src={coverUrl} alt={p.titulo || 'Propiedad'} fill sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw" className="object-cover transition-transform duration-700 group-hover:scale-105" />
                                             ) : (
                                                 <div className="w-full h-full flex items-center justify-center text-gray-400"><Home className="w-12 h-12" /></div>
                                             )}
@@ -303,7 +307,7 @@ export default function DashboardPage() {
                                             <h3 className="font-bold text-lg text-slate-800 truncate mb-1">{p.titulo || 'Sin título'}</h3>
                                             <p className="font-bold text-[#1A56DB] text-lg mb-2">${getPrice(p)}</p>
 
-                                            {/* AVISO DE CALIDAD (NUEVO) */}
+                                            {/* AVISO DE CALIDAD */}
                                             {isEnRevision && (
                                                 <div className="bg-amber-50 border border-amber-100 rounded-lg p-3 mb-3 flex items-start gap-2 animate-in fade-in duration-300">
                                                     <Clock className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
@@ -326,7 +330,7 @@ export default function DashboardPage() {
                             })}
                         </div>
                     ) : (
-                        /* EMPTY STATE (Solo si no hay nada en el filtro actual) */
+                        /* EMPTY STATE */
                         <div className="w-full max-w-4xl rounded-3xl p-1 relative overflow-hidden transition-transform duration-500 hover:scale-[1.01]" style={{ background: 'rgba(255, 255, 255, 0.7)', backdropFilter: 'blur(12px)', border: '1px solid rgba(255, 255, 255, 0.4)', boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.07)' }}>
                             <div className="bg-white/50 rounded-[20px] p-10 md:p-16 flex flex-col md:flex-row items-center gap-12 backdrop-blur-sm">
                                 <div className="flex-1 text-center md:text-left z-10">
