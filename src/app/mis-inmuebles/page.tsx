@@ -140,13 +140,13 @@ export default function DashboardPage() {
     };
 
     return (
-        <div className="flex h-screen bg-[#F3F4F6] text-[#111827] font-sans overflow-hidden" style={{ fontFamily: 'Lufga, sans-serif' }}>
+        <div className="flex min-h-screen bg-[#F3F4F6] text-[#111827] font-sans" style={{ fontFamily: 'Lufga, sans-serif' }}>
 
             <div className="absolute top-[-10%] right-[-5%] w-[500px] h-[500px] bg-blue-400/20 rounded-full blur-[80px] pointer-events-none"></div>
             <div className="absolute bottom-[-10%] left-[20%] w-[400px] h-[400px] bg-purple-400/20 rounded-full blur-[80px] pointer-events-none"></div>
 
             {/* SIDEBAR */}
-            <aside className="w-64 bg-white/80 backdrop-blur-md border-r border-gray-200 flex flex-col h-full z-20">
+            <aside className="w-64 bg-white/80 backdrop-blur-md border border-gray-200/50 flex flex-col h-[calc(100vh-2rem)] m-4 rounded-3xl sticky top-4 z-20">
                 <div className="h-20 flex items-center px-6">
                     <div className="w-10 h-10 relative mr-3">
                         <Image src="/Logo solo Nido.png" alt="Nido Logo" fill className="object-contain" />
@@ -220,9 +220,9 @@ export default function DashboardPage() {
                 </header>
 
                 <div className="flex-1 overflow-y-auto p-8 relative z-0 flex flex-col items-center">
-                    <div className="text-center mb-8 w-full max-w-6xl">
-                        <h2 className="text-3xl font-bold text-[#111827] mb-2">Bienvenido a tu Panel de Gestión</h2>
-                        <p className="text-gray-500 text-lg mb-8">Hola {displayName}, aquí tienes el resumen de tu cuenta.</p>
+                    <div className="text-left mb-8 w-full max-w-6xl">
+                        <h2 className="text-xl font-bold text-[#111827] mb-2">Bienvenido a tu Panel de Gestión</h2>
+                        <p className="text-gray-500 text-sm mb-8">Hola {displayName}, aquí tienes el resumen de tu cuenta.</p>
 
                         {/* STATS CARDS */}
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
@@ -321,7 +321,7 @@ export default function DashboardPage() {
                                                 <MapPin className="w-4 h-4 mr-1" /> {p.ciudad || p.ubicacion_municipio || 'Sin ubicación'}
                                             </div>
                                             <div className="mt-auto flex gap-3">
-                                                <button className="flex-1 py-2.5 rounded-full bg-[#1A56DB] text-white text-sm font-medium hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/20">Ver Detalles</button>
+                                                <Link href={`/mis-inmuebles/${p.id}`} className="flex-1 py-2.5 rounded-full bg-[#1A56DB] text-white text-sm font-medium hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/20 text-center">Ver Detalles</Link>
                                                 <button className="w-10 h-10 flex items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:bg-white transition-colors"><MoreHorizontal className="w-5 h-5" /></button>
                                             </div>
                                         </div>
@@ -379,6 +379,12 @@ export default function DashboardPage() {
                             <p className="text-xs text-gray-500">Añade administradores a tu cuenta.</p>
                         </div>
                     </div>
+
+                    <footer className="w-full py-6 mt-auto text-center border-t border-gray-200/50">
+                        <p className="text-xs text-gray-400 font-medium">
+                            Diseñado por Juli Tech S.A.S. - 2026. Todos los derechos reservados.
+                        </p>
+                    </footer>
                 </div>
             </main>
         </div>
