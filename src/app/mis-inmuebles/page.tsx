@@ -7,7 +7,7 @@ import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import {
     LayoutDashboard, Building, BarChart2, MessageSquare, Settings,
-    Search, Plus, Bell, Home, PlayCircle, ShieldCheck, CreditCard, Users, LogOut, MapPin, MoreHorizontal, Eye, FileText, CheckCircle, Clock
+    Search, Plus, Bell, Home, PlayCircle, ShieldCheck, CreditCard, Users, LogOut, MapPin, MoreHorizontal, Eye, FileText, CheckCircle, Clock, Pencil
 } from 'lucide-react';
 import Image from 'next/image';
 
@@ -17,6 +17,7 @@ export default function DashboardPage() {
     const [properties, setProperties] = useState<any[]>([]);
     const [loadingProps, setLoadingProps] = useState(false);
     const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+    const [openMenuId, setOpenMenuId] = useState<string | null>(null);
     const hasFetchedRef = useRef(false);
 
     // ESTADO PARA FILTROS
@@ -326,7 +327,25 @@ export default function DashboardPage() {
                                             </div>
                                             <div className="mt-auto flex gap-3">
                                                 <Link href={`/mis-inmuebles/${p.id}`} className="flex-1 py-2.5 rounded-full bg-[#1A56DB] text-white text-sm font-medium hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/20 text-center">Ver Detalles</Link>
-                                                <button className="w-10 h-10 flex items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:bg-white transition-colors"><MoreHorizontal className="w-5 h-5" /></button>
+                                                <div className="relative">
+                                                    <button
+                                                        onClick={() => setOpenMenuId(openMenuId === p.id ? null : p.id)}
+                                                        className="w-10 h-10 flex items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:bg-white transition-colors"
+                                                    >
+                                                        <MoreHorizontal className="w-5 h-5" />
+                                                    </button>
+                                                    {openMenuId === p.id && (
+                                                        <div className="absolute right-0 bottom-full mb-2 w-48 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-50">
+                                                            <Link
+                                                                href={`/publicar/crear/${p.id}/paso-1`}
+                                                                className="flex items-center gap-3 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 hover:text-blue-600 transition-colors"
+                                                            >
+                                                                <Pencil size={16} />
+                                                                Editar Inmueble
+                                                            </Link>
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
                                     </div>

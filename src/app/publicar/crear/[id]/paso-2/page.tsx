@@ -6,7 +6,7 @@ import { Inter } from 'next/font/google';
 import {
     Loader2, ChevronLeft, ChevronRight, Sparkles,
     Phone, MessageCircle, Home, Key, DollarSign, Check, AlertCircle,
-    ShieldCheck, CreditCard, FileText, Trash2, UserCheck
+    ShieldCheck, CreditCard, FileText, Trash2, UserCheck, Save
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { updateListingDetails, getListingDetails, getPropertyFeatures } from '@/app/actions/updateListingDetails';
@@ -98,6 +98,7 @@ export default function Paso2Page() {
                 if (propData) {
                     setTelefono(propData.telefono_llamadas || '');
                     setWhatsapp(propData.whatsapp || '');
+                    setInmuebleEstado(propData.estado || 'borrador'); // Populate estado for edit mode detection
                     setStep1Data({
                         tipo_inmueble: propData.tipo_inmueble, area_m2: propData.area_m2, barrio: propData.barrio, direccion: propData.direccion
                     });
@@ -291,6 +292,44 @@ export default function Paso2Page() {
         }
     };
 
+    // ═══════════════════════════════════════════════════════════════
+    // EDIT MODE: Save without payment for already published/reviewed properties
+    // ═══════════════════════════════════════════════════════════════
+    const handleUpdateOnly = async () => {
+        console.log('💾 [EditMode] Starting save process without payment...');
+        setIsSaving(true);
+        setError(null);
+
+        try {
+            const { error: updateError } = await supabase
+                .from('inmuebles')
+                .update({
+                    titulo: title,
+                    descripcion: description,
+                    precio: parseInt(price) || 0,
+                    tipo_negocio: offerType,
+                    telefono_llamadas: telefono || null,
+                    whatsapp: whatsapp || null,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', propertyId);
+
+            if (updateError) {
+                throw new Error(`Error guardando cambios: ${updateError.message}`);
+            }
+
+            console.log('✅ [EditMode] Property updated successfully');
+            alert('¡Cambios guardados exitosamente!');
+            router.push('/mis-inmuebles');
+
+        } catch (e: any) {
+            console.error('❌ [EditMode] Save error:', e);
+            setError(e.message || 'Error guardando cambios. Intenta nuevamente.');
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
     // Helper to render either the Upload Form or the File Card
     const renderDocCard = (tipo: string, label: string, isOptional: boolean = false) => {
         const doc = documents.find(d => d.tipo_documento === tipo);
@@ -449,13 +488,34 @@ export default function Paso2Page() {
 
             <div className="flex justify-between pt-4 border-t">
                 <button onClick={() => router.back()} className="flex gap-2 items-center text-slate-600"><ChevronLeft size={18} /> Atrás</button>
-                <button
-                    onClick={handlePayment}
-                    disabled={isInitiatingPayment || getMissingFields().length > 0}
-                    className={`px-6 py-2 rounded text-white font-medium ${getMissingFields().length > 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}
-                >
-                    {isInitiatingPayment ? <Loader2 className="animate-spin" /> : 'Pagar y Publicar'}
-                </button>
+
+                {/* CONDITIONAL: Show Payment OR Save based on property status */}
+                {inmuebleEstado === 'borrador' ? (
+                    // DRAFT: Show payment button (original Wompi flow)
+                    <button
+                        onClick={handlePayment}
+                        disabled={isInitiatingPayment || getMissingFields().length > 0}
+                        className={`px-6 py-2 rounded text-white font-medium ${getMissingFields().length > 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}
+                    >
+                        {isInitiatingPayment ? <Loader2 className="animate-spin" /> : 'Pagar y Publicar'}
+                    </button>
+                ) : (
+                    // EDIT MODE: Show save button (no payment required)
+                    <div className="flex flex-col items-end gap-3">
+                        <div className="bg-blue-50 text-blue-800 px-4 py-2 rounded-lg text-sm flex items-center gap-2">
+                            <Check size={16} />
+                            Estás editando un inmueble existente. No es necesario realizar pago.
+                        </div>
+                        <button
+                            onClick={handleUpdateOnly}
+                            disabled={isSaving || !title.trim() || !price}
+                            className={`px-6 py-2.5 rounded-lg text-white font-medium flex items-center gap-2 transition-all ${(isSaving || !title.trim() || !price) ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-500/25'}`}
+                        >
+                            {isSaving ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
+                            Guardar Cambios
+                        </button>
+                    </div>
+                )}
             </div>
         </div>
     );

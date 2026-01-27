@@ -427,7 +427,7 @@ export default function PropertyDetailsPage() {
                                 <div className="bg-white/60 rounded-3xl border border-white/50 shadow-sm backdrop-blur-md p-6">
                                     <h3 className="text-sm font-semibold text-gray-700 mb-4">Acciones</h3>
                                     <Link
-                                        href={`/publicar/editar/${property.id}`}
+                                        href={`/publicar/crear/${property.id}/paso-1`}
                                         className="w-full py-3 rounded-full bg-[#1A56DB] text-white font-medium hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2"
                                     >
                                         <Edit className="w-4 h-4" /> Editar Propiedad
