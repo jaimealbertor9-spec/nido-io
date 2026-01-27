@@ -29,7 +29,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await supabase.auth.signOut();
         setUser(null);
         setProfile(null);
-        router.push('/');
+        // Navigation removed - let consumer (page) decide where to go
     };
 
     useEffect(() => {

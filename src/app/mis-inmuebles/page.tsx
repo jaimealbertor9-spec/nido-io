@@ -33,7 +33,10 @@ export default function DashboardPage() {
     // DATA FETCHING (Optimizado y Limpio)
     useEffect(() => {
         if (!user) return;
-        if (hasFetchedRef.current) return;
+        if (hasFetchedRef.current) {
+            setLoadingProps(false); // CRITICAL FIX: Ensure spinner is off on re-mount
+            return;
+        }
 
         async function fetchData() {
             try {
@@ -67,6 +70,7 @@ export default function DashboardPage() {
     const handleSignOut = async () => {
         await signOut();
         router.push('/bienvenidos');
+        router.refresh(); // Ensure cache is cleared
     };
 
     // CÁLCULO DE ESTADÍSTICAS
@@ -200,7 +204,7 @@ export default function DashboardPage() {
                             <div className="relative">
                                 <button onClick={() => setIsUserMenuOpen(!isUserMenuOpen)} className="flex items-center focus:outline-none">
                                     {avatarUrl ? (
-                                        <div className="relative h-10 w-10"><Image src={avatarUrl} alt="Avatar" fill className="rounded-full object-cover border-2 border-white shadow-md" referrerPolicy="no-referrer" /></div>
+                                        <div className="relative h-10 w-10"><Image src={avatarUrl} alt="Avatar" fill sizes="40px" className="rounded-full object-cover border-2 border-white shadow-md" referrerPolicy="no-referrer" /></div>
                                     ) : (
                                         <div className="h-10 w-10 rounded-full bg-gradient-to-tr from-orange-300 to-amber-200 border-2 border-white shadow-md flex items-center justify-center text-white font-bold">{displayName?.[0]?.toUpperCase()}</div>
                                     )}
