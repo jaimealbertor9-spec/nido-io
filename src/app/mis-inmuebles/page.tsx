@@ -130,7 +130,7 @@ export default function DashboardPage() {
         const images = p.inmueble_imagenes;
         if (!Array.isArray(images) || images.length === 0) return null;
         // Prioridad: Fachada -> Primera
-        const fachada = images.find((img: any) => img.category === 'fachada' || img.etiqueta === 'fachada');
+        const fachada = images.find((img: any) => img.category === 'fachada');
         return fachada ? fachada.url : images[0].url;
     };
 

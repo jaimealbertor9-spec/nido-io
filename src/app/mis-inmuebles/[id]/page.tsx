@@ -5,9 +5,9 @@ import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/components/AuthProvider';
 import {
-    ArrowLeft, MapPin, Bed, Bath, Car, Maximize, Edit, Home,
+    ArrowLeft, MapPin, Bed, Bath, Maximize, Edit, Home, Phone,
     LayoutDashboard, Building, BarChart2, MessageSquare, Bell, Plus, LogOut,
-    CheckCircle, Clock, Eye
+    CheckCircle, Clock, Eye, Zap, Sparkles, Layers
 } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
@@ -16,27 +16,27 @@ interface PropertyImage {
     id: string;
     url: string;
     category?: string;
-    etiqueta?: string;
 }
 
 interface Property {
     id: string;
-    titulo: string | null;
+    titulo: string;
     descripcion: string | null;
-    precio: number | null;
-    precio_venta: number | null;
-    precio_arriendo: number | null;
+    precio: number;
     ciudad: string | null;
-    ubicacion_municipio: string | null;
     barrio: string | null;
     direccion: string | null;
     habitaciones: number | null;
     banos: number | null;
-    parqueaderos: number | null;
     area_m2: number | null;
+    estrato: number | null;
     estado: string | null;
     tipo_inmueble: string | null;
     tipo_negocio: string | null;
+    telefono_llamadas: string | null;
+    whatsapp: string | null;
+    servicios: string[];
+    amenities: string[];
     inmueble_imagenes: PropertyImage[];
 }
 
@@ -74,7 +74,7 @@ export default function PropertyDetailsPage() {
                 // Set first image as selected
                 if (data.inmueble_imagenes?.length > 0) {
                     const fachada = data.inmueble_imagenes.find(
-                        (img: PropertyImage) => img.category === 'fachada' || img.etiqueta === 'fachada'
+                        (img: PropertyImage) => img.category === 'fachada'
                     );
                     setSelectedImage(fachada?.url || data.inmueble_imagenes[0].url);
                 }
@@ -112,7 +112,7 @@ export default function PropertyDetailsPage() {
     };
 
     const getPrice = () => {
-        return property?.precio || property?.precio_venta || property?.precio_arriendo || 0;
+        return property?.precio || 0;
     };
 
     const avatarUrl = user?.user_metadata?.avatar_url || user?.user_metadata?.picture || profile?.avatar_url;
@@ -306,7 +306,7 @@ export default function PropertyDetailsPage() {
                                             </h2>
                                             <div className="flex items-center text-gray-500 text-sm">
                                                 <MapPin className="w-4 h-4 mr-1" />
-                                                {[property.barrio, property.ciudad || property.ubicacion_municipio].filter(Boolean).join(', ') || 'Sin ubicación'}
+                                                {[property.barrio, property.ciudad].filter(Boolean).join(', ') || 'Sin ubicación'}
                                             </div>
                                             {property.direccion && (
                                                 <p className="text-xs text-gray-400 mt-1">{property.direccion}</p>
@@ -366,15 +366,49 @@ export default function PropertyDetailsPage() {
                                         </div>
                                         <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-2xl">
                                             <div className="p-2 bg-amber-100 rounded-xl">
-                                                <Car className="w-5 h-5 text-amber-600" />
+                                                <Layers className="w-5 h-5 text-amber-600" />
                                             </div>
                                             <div>
-                                                <p className="text-xs text-gray-500">Parqueaderos</p>
-                                                <p className="text-lg font-bold text-gray-800">{property.parqueaderos || 0}</p>
+                                                <p className="text-xs text-gray-500">Estrato</p>
+                                                <p className="text-lg font-bold text-gray-800">{property.estrato || '-'}</p>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
+
+                                {/* Servicios Públicos */}
+                                {property.servicios && property.servicios.length > 0 && (
+                                    <div className="bg-white/60 rounded-3xl border border-white/50 shadow-sm backdrop-blur-md p-6">
+                                        <div className="flex items-center gap-2 mb-4">
+                                            <Zap className="w-5 h-5 text-blue-600" />
+                                            <h3 className="text-lg font-bold text-[#111827]">Servicios Públicos</h3>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2">
+                                            {property.servicios.map((servicio, idx) => (
+                                                <span key={idx} className="px-3 py-1.5 bg-blue-100 text-blue-800 text-sm font-medium rounded-full">
+                                                    {servicio}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Amenidades */}
+                                {property.amenities && property.amenities.length > 0 && (
+                                    <div className="bg-white/60 rounded-3xl border border-white/50 shadow-sm backdrop-blur-md p-6">
+                                        <div className="flex items-center gap-2 mb-4">
+                                            <Sparkles className="w-5 h-5 text-green-600" />
+                                            <h3 className="text-lg font-bold text-[#111827]">Amenidades</h3>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2">
+                                            {property.amenities.map((amenidad, idx) => (
+                                                <span key={idx} className="px-3 py-1.5 bg-green-100 text-green-800 text-sm font-medium rounded-full">
+                                                    {amenidad}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
 
                                 {/* Description */}
                                 {property.descripcion && (
@@ -418,6 +452,34 @@ export default function PropertyDetailsPage() {
                                         </div>
                                     </div>
                                 </div>
+
+                                {/* Contact Info */}
+                                {(property.telefono_llamadas || property.whatsapp) && (
+                                    <div className="bg-white/60 rounded-3xl border border-white/50 shadow-sm backdrop-blur-md p-6">
+                                        <div className="flex items-center gap-2 mb-4">
+                                            <Phone className="w-4 h-4 text-gray-600" />
+                                            <h3 className="text-sm font-semibold text-gray-700">Contacto</h3>
+                                        </div>
+                                        <div className="space-y-2">
+                                            {property.telefono_llamadas && (
+                                                <div className="flex items-center justify-between text-sm">
+                                                    <span className="text-gray-500">Teléfono</span>
+                                                    <a href={`tel:${property.telefono_llamadas}`} className="font-medium text-[#1A56DB] hover:underline">
+                                                        {property.telefono_llamadas}
+                                                    </a>
+                                                </div>
+                                            )}
+                                            {property.whatsapp && (
+                                                <div className="flex items-center justify-between text-sm">
+                                                    <span className="text-gray-500">WhatsApp</span>
+                                                    <a href={`https://wa.me/${property.whatsapp.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="font-medium text-green-600 hover:underline">
+                                                        {property.whatsapp}
+                                                    </a>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -425,7 +487,7 @@ export default function PropertyDetailsPage() {
                     {/* FOOTER */}
                     <footer className="w-full py-6 mt-10 text-center border-t border-gray-200/50">
                         <p className="text-xs text-gray-400 font-medium">
-                            Diseñado por Juli Tech S.A.S. - 2026
+                            Diseñado por Juli Tech S.A.S. - 2026. Todos los derechos reservados.
                         </p>
                     </footer>
                 </div>
