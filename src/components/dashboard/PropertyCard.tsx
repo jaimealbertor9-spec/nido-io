@@ -34,6 +34,14 @@ const statusConfig: Record<EstadoInmueble, { label: string; className: string }>
         label: 'Rechazado',
         className: 'bg-red-100 text-red-700 border-red-200',
     },
+    vendido: {
+        label: 'Vendido',
+        className: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    },
+    alquilado: {
+        label: 'Alquilado',
+        className: 'bg-blue-100 text-blue-700 border-blue-200',
+    },
 };
 
 const tipoNegocioLabels: Record<string, string> = {

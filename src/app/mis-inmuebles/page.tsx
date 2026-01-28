@@ -31,7 +31,7 @@ export default function DashboardPage() {
         return () => clearTimeout(timer);
     }, []);
 
-    // DATA FETCHING (Fixed Race Condition Pattern)
+    // DATA FETCHING (Fixed Race Condition Pattern + Watchdog Timeout)
     useEffect(() => {
         let isMounted = true;
 
@@ -42,11 +42,20 @@ export default function DashboardPage() {
             return;
         }
 
+        // WATCHDOG: Force unlock after 5s if DB hangs (Vercel safety net)
+        const watchdog = setTimeout(() => {
+            if (isMounted) {
+                console.warn('⚠️ Fetch timeout: Force releasing loading state after 5s');
+                setLoadingProps(false);
+            }
+        }, 5000);
+
         // Capture user.id here where TypeScript knows user is not null
         const userId = user.id;
 
         // CASE 2: Already fetched and have data → skip re-fetch
         if (hasFetchedRef.current && properties.length > 0) {
+            clearTimeout(watchdog);
             setLoadingProps(false);
             return;
         }
@@ -78,6 +87,7 @@ export default function DashboardPage() {
                 console.error('Error cargando inmuebles:', err);
                 hasFetchedRef.current = false;
             } finally {
+                clearTimeout(watchdog); // Kill watchdog on success or error
                 if (isMounted) {
                     setLoadingProps(false);
                 }
@@ -88,6 +98,7 @@ export default function DashboardPage() {
 
         return () => {
             isMounted = false;
+            clearTimeout(watchdog); // Cleanup on unmount
         };
     }, [user, properties.length]);
 
@@ -428,7 +439,7 @@ export default function DashboardPage() {
 
                     <footer className="w-full py-6 mt-auto text-center border-t border-gray-200/50">
                         <p className="text-xs text-gray-400 font-medium">
-                            Diseñado por Juli Tech S.A.S. - 2026. Todos los derechos reservados.
+                            Copyright © 2026 - Juli Tech S.A.S. - Todos Derechos Reservados.
                         </p>
                     </footer>
                 </div>
