@@ -31,23 +31,26 @@ export default function DashboardPage() {
         return () => clearTimeout(timer);
     }, []);
 
-    // DATA FETCHING (Optimizado y Limpio)
+    // DATA FETCHING (Robust "Double Check" Pattern)
     useEffect(() => {
+        let isMounted = true; // 1. Protection against unmounting updates
+
+        // 2. Double Check: Only skip if we fetched AND we actually have data
         if (!user) return;
-        if (hasFetchedRef.current) {
-            setLoadingProps(false); // CRITICAL FIX: Ensure spinner is off on re-mount
+        if (hasFetchedRef.current && properties.length > 0) {
+            setLoadingProps(false);
             return;
         }
 
         async function fetchData() {
             try {
-                // Validación extra para TypeScript
                 if (!user) return;
 
-                setLoadingProps(true);
-                hasFetchedRef.current = true;
+                // Only show loading if we don't have data yet
+                if (properties.length === 0) {
+                    setLoadingProps(true);
+                }
 
-                // Consulta a tabla REAL 'inmueble_imagenes' sin hints conflictivos
                 const { data, error } = await supabase
                     .from('inmuebles')
                     .select('*, inmueble_imagenes(*)')
@@ -56,17 +59,31 @@ export default function DashboardPage() {
 
                 if (error) throw error;
 
-                setProperties(data || []);
+                // 3. Late Confirmation: Only mark as fetched if successful AND mounted
+                if (isMounted) {
+                    setProperties(data || []);
+                    if (data && data.length > 0) {
+                        hasFetchedRef.current = true;
+                    }
+                }
             } catch (err) {
                 console.error('Error cargando inmuebles:', err);
-                hasFetchedRef.current = false; // Permitir reintento en caso de error real
+                // Reset guard on error so we can try again
+                hasFetchedRef.current = false;
             } finally {
-                setLoadingProps(false);
+                if (isMounted) {
+                    setLoadingProps(false);
+                }
             }
         }
 
         fetchData();
-    }, [user]);
+
+        // Cleanup function
+        return () => {
+            isMounted = false;
+        };
+    }, [user, properties.length]); // Add properties.length to dependency
 
     const handleSignOut = async () => {
         await signOut();
