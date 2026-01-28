@@ -31,22 +31,30 @@ export default function DashboardPage() {
         return () => clearTimeout(timer);
     }, []);
 
-    // DATA FETCHING (Robust "Double Check" Pattern)
+    // DATA FETCHING (Fixed Race Condition Pattern)
     useEffect(() => {
-        let isMounted = true; // 1. Protection against unmounting updates
+        let isMounted = true;
 
-        // 2. Double Check: Only skip if we fetched AND we actually have data
-        if (!user) return;
+        // CASE 1: No user yet (auth still resolving or logged out)
+        // → Turn off loading immediately, don't attempt fetch
+        if (!user) {
+            setLoadingProps(false);
+            return;
+        }
+
+        // Capture user.id here where TypeScript knows user is not null
+        const userId = user.id;
+
+        // CASE 2: Already fetched and have data → skip re-fetch
         if (hasFetchedRef.current && properties.length > 0) {
             setLoadingProps(false);
             return;
         }
 
+        // CASE 3: User exists, need to fetch data
         async function fetchData() {
             try {
-                if (!user) return;
-
-                // Only show loading if we don't have data yet
+                // Show loading only if we don't have data yet
                 if (properties.length === 0) {
                     setLoadingProps(true);
                 }
@@ -54,12 +62,12 @@ export default function DashboardPage() {
                 const { data, error } = await supabase
                     .from('inmuebles')
                     .select('*, inmueble_imagenes(*)')
-                    .eq('propietario_id', user.id)
+                    .eq('propietario_id', userId)
                     .order('created_at', { ascending: false });
 
                 if (error) throw error;
 
-                // 3. Late Confirmation: Only mark as fetched if successful AND mounted
+                // Only update state if component is still mounted
                 if (isMounted) {
                     setProperties(data || []);
                     if (data && data.length > 0) {
@@ -68,7 +76,6 @@ export default function DashboardPage() {
                 }
             } catch (err) {
                 console.error('Error cargando inmuebles:', err);
-                // Reset guard on error so we can try again
                 hasFetchedRef.current = false;
             } finally {
                 if (isMounted) {
@@ -79,11 +86,10 @@ export default function DashboardPage() {
 
         fetchData();
 
-        // Cleanup function
         return () => {
             isMounted = false;
         };
-    }, [user, properties.length]); // Add properties.length to dependency
+    }, [user, properties.length]);
 
     const handleSignOut = async () => {
         await signOut();
