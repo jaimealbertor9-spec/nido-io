@@ -63,8 +63,13 @@ export default function DashboardPage() {
         // CASE 3: User exists, need to fetch data
         async function fetchData() {
             try {
-                // ⚡️ ARCHITECTURE FIX: Force session handshake to wake up connection
-                const { error: authError } = await supabase.auth.getUser();
+                // ⚡️ SELF-HEALING PROTOCOL: Race handshake vs 2s timeout to detect deadlock
+                const handshake = supabase.auth.getUser();
+                const timeout = new Promise<never>((_, reject) =>
+                    setTimeout(() => reject(new Error('DEADLOCK')), 2000)
+                );
+
+                const { error: authError } = await Promise.race([handshake, timeout]);
                 if (authError) throw authError;
 
                 // Show loading only if we don't have data yet
@@ -87,7 +92,16 @@ export default function DashboardPage() {
                         hasFetchedRef.current = true;
                     }
                 }
-            } catch (err) {
+            } catch (err: any) {
+                // 🚨 DEADLOCK DETECTION & AUTO-HEALING
+                if (err?.message === 'DEADLOCK' || err?.message === 'Auth session missing!') {
+                    console.warn('⚠️ Session Deadlock/Corruption detected. Auto-healing...');
+                    // THE CURE: Clear stale lock from localStorage
+                    localStorage.clear();
+                    await supabase.auth.signOut();
+                    window.location.href = '/publicar/auth?type=login';
+                    return;
+                }
                 console.error('Error cargando inmuebles:', err);
                 hasFetchedRef.current = false;
             } finally {
