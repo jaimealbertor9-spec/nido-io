@@ -66,7 +66,7 @@ export default function DashboardPage() {
                 // ⚡️ SELF-HEALING PROTOCOL: Race handshake vs 2s timeout to detect deadlock
                 const handshake = supabase.auth.getUser();
                 const timeout = new Promise<never>((_, reject) =>
-                    setTimeout(() => reject(new Error('DEADLOCK')), 2000)
+                    setTimeout(() => reject(new Error('DEADLOCK')), 10000) // 10 seconds for cold starts
                 );
 
                 const { error: authError } = await Promise.race([handshake, timeout]);
