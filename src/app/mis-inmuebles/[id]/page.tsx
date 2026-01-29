@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/components/AuthProvider';
@@ -54,11 +54,34 @@ export default function PropertyDetailsPage() {
     const propertyId = params.id as string;
 
     useEffect(() => {
+        let isMounted = true;
+
+        // CASE 1: No propertyId - nothing to fetch
         if (!propertyId) return;
+
+        // CASE 2: No user yet (auth still resolving or logged out)
+        // → Turn off loading immediately, don't attempt fetch
+        if (!user) {
+            setLoading(false);
+            return;
+        }
+
+        // WATCHDOG: Force unlock after 5s if DB hangs (Vercel safety net)
+        const watchdog = setTimeout(() => {
+            if (isMounted) {
+                console.warn('⚠️ Details fetch timeout: Force releasing loading state after 5s');
+                setLoading(false);
+            }
+        }, 5000);
 
         async function fetchProperty() {
             try {
                 setLoading(true);
+
+                // ⚡️ ARCHITECTURE FIX: Force session handshake to wake up connection
+                const { error: authError } = await supabase.auth.getUser();
+                if (authError) throw authError;
+
                 const { data, error } = await supabase
                     .from('inmuebles')
                     .select('*, inmueble_imagenes(*)')
@@ -66,28 +89,38 @@ export default function PropertyDetailsPage() {
                     .single();
 
                 if (error || !data) {
-                    setNotFound(true);
+                    if (isMounted) setNotFound(true);
                     return;
                 }
 
-                setProperty(data as Property);
-                // Set first image as selected
-                if (data.inmueble_imagenes?.length > 0) {
-                    const fachada = data.inmueble_imagenes.find(
-                        (img: PropertyImage) => img.category === 'fachada'
-                    );
-                    setSelectedImage(fachada?.url || data.inmueble_imagenes[0].url);
+                if (isMounted) {
+                    setProperty(data as Property);
+                    // Set first image as selected
+                    if (data.inmueble_imagenes?.length > 0) {
+                        const fachada = data.inmueble_imagenes.find(
+                            (img: PropertyImage) => img.category === 'fachada'
+                        );
+                        setSelectedImage(fachada?.url || data.inmueble_imagenes[0].url);
+                    }
                 }
             } catch (err) {
                 console.error('Error fetching property:', err);
-                setNotFound(true);
+                if (isMounted) setNotFound(true);
             } finally {
-                setLoading(false);
+                clearTimeout(watchdog); // Kill watchdog on success or error
+                if (isMounted) {
+                    setLoading(false);
+                }
             }
         }
 
         fetchProperty();
-    }, [propertyId]);
+
+        return () => {
+            isMounted = false;
+            clearTimeout(watchdog); // Cleanup on unmount
+        };
+    }, [propertyId, user]);
 
     const handleSignOut = async () => {
         await signOut();

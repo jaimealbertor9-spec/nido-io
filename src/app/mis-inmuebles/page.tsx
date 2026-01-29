@@ -63,6 +63,10 @@ export default function DashboardPage() {
         // CASE 3: User exists, need to fetch data
         async function fetchData() {
             try {
+                // ⚡️ ARCHITECTURE FIX: Force session handshake to wake up connection
+                const { error: authError } = await supabase.auth.getUser();
+                if (authError) throw authError;
+
                 // Show loading only if we don't have data yet
                 if (properties.length === 0) {
                     setLoadingProps(true);
