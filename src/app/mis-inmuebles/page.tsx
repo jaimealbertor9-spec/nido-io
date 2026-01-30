@@ -42,20 +42,11 @@ export default function DashboardPage() {
             return;
         }
 
-        // WATCHDOG: Force unlock after 5s if DB hangs (Vercel safety net)
-        const watchdog = setTimeout(() => {
-            if (isMounted) {
-                console.warn('⚠️ Fetch timeout: Force releasing loading state after 5s');
-                setLoadingProps(false);
-            }
-        }, 5000);
-
         // Capture user.id here where TypeScript knows user is not null
         const userId = user.id;
 
         // CASE 2: Already fetched and have data → skip re-fetch
         if (hasFetchedRef.current && properties.length > 0) {
-            clearTimeout(watchdog);
             setLoadingProps(false);
             return;
         }
@@ -105,7 +96,6 @@ export default function DashboardPage() {
                 console.error('Error cargando inmuebles:', err);
                 hasFetchedRef.current = false;
             } finally {
-                clearTimeout(watchdog); // Kill watchdog on success or error
                 if (isMounted) {
                     setLoadingProps(false);
                 }
@@ -116,7 +106,6 @@ export default function DashboardPage() {
 
         return () => {
             isMounted = false;
-            clearTimeout(watchdog); // Cleanup on unmount
         };
     }, [user, properties.length]);
 
