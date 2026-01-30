@@ -487,7 +487,36 @@ export default function Paso2Page() {
             </section>
 
             <div className="flex justify-between pt-4 border-t">
-                <button onClick={() => router.back()} className="flex gap-2 items-center text-slate-600"><ChevronLeft size={18} /> Atrás</button>
+                <button
+                    onClick={async () => {
+                        // Auto-save current data before exiting
+                        setIsSaving(true);
+                        try {
+                            await supabase
+                                .from('inmuebles')
+                                .update({
+                                    titulo: title || null,
+                                    descripcion: description || null,
+                                    precio: parseInt(price) || null,
+                                    tipo_negocio: offerType,
+                                    telefono_llamadas: telefono || null,
+                                    whatsapp: whatsapp || null,
+                                    updated_at: new Date().toISOString()
+                                })
+                                .eq('id', propertyId);
+                        } catch (e) {
+                            console.warn('Auto-save on exit warning:', e);
+                        } finally {
+                            setIsSaving(false);
+                        }
+                        router.push('/mis-inmuebles');
+                    }}
+                    disabled={isSaving}
+                    className="flex gap-2 items-center text-slate-600 hover:text-blue-600 transition-colors disabled:opacity-50"
+                >
+                    {isSaving ? <Loader2 className="animate-spin" size={18} /> : <ChevronLeft size={18} />}
+                    Guardar y Volver
+                </button>
 
                 {/* CONDITIONAL: Show Payment OR Save based on property status */}
                 {inmuebleEstado === 'borrador' ? (

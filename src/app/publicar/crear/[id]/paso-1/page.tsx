@@ -57,6 +57,7 @@ export default function Paso1Page() {
     // Loading states
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
+    const [isSavingAndExit, setIsSavingAndExit] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
 
     // Fatal error state - shows recovery UI instead of redirecting
@@ -353,6 +354,60 @@ export default function Paso1Page() {
             setError(err.message || 'Error al guardar. Intenta de nuevo.');
         } finally {
             setIsSaving(false);
+        }
+    };
+
+    // ═══════════════════════════════════════════════════════════════
+    // SAVE AND EXIT (Guardar y Volver)
+    // ═══════════════════════════════════════════════════════════════
+    const handleSaveAndExit = async () => {
+        setError(null);
+        setIsSavingAndExit(true);
+
+        try {
+            // Save location (only if we have required fields)
+            if (address.trim() && neighborhood) {
+                const locationResult = await updatePropertyLocation(
+                    propertyId,
+                    address.trim(),
+                    neighborhood,
+                    puntoReferencia,
+                    latitud,
+                    longitud,
+                    ciudad
+                );
+
+                if (!locationResult.success) {
+                    console.warn('Location save warning:', locationResult.error);
+                }
+            }
+
+            // Save features (only if we have some data)
+            if (habitaciones > 0 || banos > 0 || area > 0 || servicios.length > 0) {
+                const featuresResult = await savePropertyFeatures(
+                    propertyId,
+                    habitaciones,
+                    banos,
+                    area,
+                    estrato,
+                    amenidades,
+                    servicios,
+                    undefined
+                );
+
+                if (!featuresResult.success) {
+                    console.warn('Features save warning:', featuresResult.error);
+                }
+            }
+
+            // Redirect to dashboard
+            router.push('/mis-inmuebles');
+
+        } catch (err: any) {
+            console.error('Save and exit error:', err);
+            setError(err.message || 'Error al guardar. Intenta de nuevo.');
+        } finally {
+            setIsSavingAndExit(false);
         }
     };
 
@@ -757,10 +812,18 @@ export default function Paso1Page() {
             <div className="flex items-center justify-between pt-4 border-t border-gray-200">
                 <button
                     type="button"
-                    onClick={() => router.push('/bienvenidos')}
-                    className="text-sm font-medium text-slate-500 hover:text-red-600 transition-colors"
+                    onClick={handleSaveAndExit}
+                    disabled={isSavingAndExit}
+                    className="flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-blue-600 transition-colors disabled:opacity-50"
                 >
-                    Cancelar
+                    {isSavingAndExit ? (
+                        <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Guardando...
+                        </>
+                    ) : (
+                        'Guardar y Volver'
+                    )}
                 </button>
 
                 {/* CONTINUE BUTTON WITH CONDITIONAL STATE */}

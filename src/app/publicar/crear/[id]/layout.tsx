@@ -121,15 +121,8 @@ export default function WizardLayout({ children }: { children: React.ReactNode }
                         </div>
                     </nav>
 
-                    {/* Footer */}
-                    <div className="p-4 border-t border-slate-200">
-                        <Link
-                            href="/bienvenidos"
-                            className="block text-center text-sm text-slate-500 hover:text-red-600 transition-colors"
-                        >
-                            Cancelar y salir
-                        </Link>
-                    </div>
+                    {/* Footer - Removed "Cancelar y salir" to prevent session errors */}
+                    {/* Users should use the "Guardar y Volver" button on each step instead */}
                 </aside>
 
                 {/* ═══════════════════════════════════════════════════════════════ */}
