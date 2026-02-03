@@ -1,15 +1,21 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 
+/**
+ * COOKIE SYNC MIDDLEWARE
+ * 
+ * Purpose: Refresh Supabase auth tokens on every request.
+ * 
+ * RULES:
+ * ✅ Refresh cookies via getUser()
+ * ❌ NO redirects
+ * ❌ NO auth decisions
+ * ❌ NO logging auth state
+ * ❌ NO checking if user exists
+ * 
+ * Auth authority lives in layout.tsx, NOT here.
+ */
 export async function middleware(request: NextRequest) {
-    const pathname = request.nextUrl.pathname;
-
-    // SKIP: Auth pages handle their own routing - don't interfere
-    if (pathname.includes('/auth')) {
-        console.log('🔓 [Middleware] Skipping auth route:', pathname);
-        return NextResponse.next();
-    }
-
     let response = NextResponse.next({
         request: { headers: request.headers },
     });
@@ -35,30 +41,25 @@ export async function middleware(request: NextRequest) {
         }
     );
 
-    // Refresh session - this is CRITICAL for maintaining auth state
+    // COOKIE SYNC: Refresh tokens (result intentionally ignored)
     const { data: { user } } = await supabase.auth.getUser();
 
-    // Log for debugging
-    console.log('🔐 [Middleware]', pathname, user ? `User: ${user.email}` : 'No user');
+    // DEBUG: Log that middleware ran (user state, not decision)
+    console.log('🔄 [Middleware] Cookie sync ran, user:', user?.email || 'null');
 
-    // Protected routes: require authentication
-    // REMOVED '/publicar/crear' to prevent false positive redirects during wizard flow.
-    // The page components handle auth verification client-side via useAuth hook.
-    const protectedRoutes = ['/mis-inmuebles'];
-    const isProtectedRoute = protectedRoutes.some(route => pathname.startsWith(route));
-
-    if (!user && isProtectedRoute) {
-        console.log('🚫 [Middleware] Unauthenticated access to protected route, redirecting...');
-        return NextResponse.redirect(new URL('/publicar/auth', request.url));
-    }
-
+    // ALWAYS pass through - no decisions here
     return response;
 }
 
 export const config = {
     matcher: [
-        // Only protect publish wizard routes
-        // NOTE: /mis-inmuebles removed - page handles its own client-side auth
-        '/publicar/crear/:path*',
+        /*
+         * Match all request paths except for:
+         * - _next/static (static files)
+         * - _next/image (image optimization files)
+         * - favicon.ico (favicon file)
+         * - public assets
+         */
+        '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|ttf|otf|woff|woff2)$).*)',
     ],
 };

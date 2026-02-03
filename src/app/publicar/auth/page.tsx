@@ -28,6 +28,21 @@ function AuthContent() {
     const [isRedirecting, setIsRedirecting] = useState(false);
 
     // ============================================================
+    // ONE-TIME CLEANUP: Remove old localStorage tokens (migration)
+    // ============================================================
+    useEffect(() => {
+        // Clean up legacy Supabase tokens from localStorage
+        // These conflict with the new cookie-based auth system
+        const keysToRemove = Object.keys(localStorage).filter(key =>
+            key.startsWith('sb-') || key.includes('supabase')
+        );
+        if (keysToRemove.length > 0) {
+            console.log('🧹 [Auth] Cleaning up legacy localStorage tokens...');
+            keysToRemove.forEach(key => localStorage.removeItem(key));
+        }
+    }, []);
+
+    // ============================================================
     // LOBOTOMIZED AUTH: Always redirect to /mis-inmuebles
     // ============================================================
     useEffect(() => {
