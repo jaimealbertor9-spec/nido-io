@@ -412,13 +412,21 @@ export default function Paso2Page() {
                     <h2 className="text-lg font-semibold text-slate-900">Descripción</h2>
                     <button onClick={async () => {
                         setIsGenerating(true);
-                        const f = await getPropertyFeatures(propertyId);
-                        if (f) {
+                        setError(null); // Clear previous errors
+                        try {
+                            const f = await getPropertyFeatures(propertyId);
+                            if (!f) {
+                                throw new Error('No se pudieron obtener las características del inmueble. Completa el Paso 1 primero.');
+                            }
                             const res = await generatePropertyDescription(f);
                             if (res.titulo) { setTitle(res.titulo); autoSaveField('titulo', res.titulo); }
                             if (res.descripcion) { setDescription(res.descripcion); autoSaveField('descripcion', res.descripcion); }
+                        } catch (err: any) {
+                            console.error('❌ [AI Generation Error]:', err);
+                            setError(err?.message || 'Error al generar descripción con IA. Intenta de nuevo.');
+                        } finally {
+                            setIsGenerating(false);
                         }
-                        setIsGenerating(false);
                     }} disabled={isGenerating} className="text-blue-600 text-sm font-medium flex items-center gap-1">
                         {isGenerating ? <Loader2 className="animate-spin w-4 h-4" /> : <Sparkles className="w-4 h-4" />} Generar con IA
                     </button>
@@ -497,12 +505,12 @@ export default function Paso2Page() {
                                 await supabase
                                     .from('inmuebles')
                                     .update({
-                                        titulo: title || null,
-                                        descripcion: description || null,
-                                        precio: parseInt(price) || null,
+                                        titulo: title || undefined,
+                                        descripcion: description || undefined,
+                                        precio: parseInt(price) || undefined,
                                         tipo_negocio: offerType,
-                                        telefono_llamadas: telefono || null,
-                                        whatsapp: whatsapp || null,
+                                        telefono_llamadas: telefono || undefined,
+                                        whatsapp: whatsapp || undefined,
                                         updated_at: new Date().toISOString()
                                     })
                                     .eq('id', propertyId);

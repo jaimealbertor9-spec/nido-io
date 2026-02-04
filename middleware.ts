@@ -86,8 +86,8 @@ export async function middleware(request: NextRequest) {
     const isAuthRoute = AUTH_ROUTES.some(route => pathname.startsWith(route));
 
     if (isAuthRoute && user) {
-        console.log(`🔓 [Middleware] Authenticated user on auth page, redirecting to: /publicar/tipo`);
-        return NextResponse.redirect(new URL('/publicar/tipo', request.url));
+        console.log(`🔓 [Middleware] User session detected on auth page - delegating redirect to client`);
+        return response; // Let client-side handle navigation to /mis-inmuebles
     }
 
     return response;
