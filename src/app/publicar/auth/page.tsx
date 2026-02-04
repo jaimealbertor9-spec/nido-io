@@ -43,36 +43,20 @@ function AuthContent() {
     }, []);
 
     // ============================================================
-    // LOBOTOMIZED AUTH: Always redirect to /mis-inmuebles
+    // ARQUITECTURA ENTERPRISE: El servidor decide TODAS las redirecciones
+    // El cliente solo escucha eventos para mostrar UI de carga
     // ============================================================
     useEffect(() => {
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
-            async (event, session) => {
+            (event, session) => {
                 console.log('📡 [Auth] Event:', event);
-
+                // Solo mostrar estado de carga, NO redirigir aquí
                 if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session?.user) {
-                    console.log('🚀 [Auth] Redirecting to /mis-inmuebles');
                     setIsRedirecting(true);
-
-                    // Quick user upsert (non-blocking)
-                    try {
-                        await supabase
-                            .from('usuarios')
-                            .upsert({
-                                id: session.user.id,
-                                email: session.user.email,
-                                nombre: session.user.email?.split('@')[0] || 'Usuario',
-                            } as any, { onConflict: 'id' });
-                    } catch (err) {
-                        console.warn('⚠️ User upsert failed (non-critical)');
-                    }
-
-                    // UNCONDITIONAL redirect to dashboard
-                    window.location.href = '/mis-inmuebles';
+                    // El servidor (/auth/callback) manejará el redirect
                 }
             }
         );
-
         return () => subscription.unsubscribe();
     }, []);
 
@@ -84,10 +68,11 @@ function AuthContent() {
         setError(null);
 
         try {
+            // OAuth: Redirigir al callback del servidor (ÚNICA autoridad)
             const { error } = await supabase.auth.signInWithOAuth({
                 provider,
                 options: {
-                    redirectTo: `${window.location.origin}/publicar/auth?type=${propertyType}`,
+                    redirectTo: `${window.location.origin}/auth/callback?intent=propietario`,
                     queryParams: provider === 'google' ? {
                         access_type: 'offline',
                         prompt: 'consent',
@@ -131,7 +116,13 @@ function AuthContent() {
                     }
                     throw error;
                 }
+
+                // Email Login exitoso: Forzar recarga hacia el servidor
+                console.log('✅ [Auth] Email login success - redirecting to server callback');
+                window.location.href = `${window.location.origin}/auth/callback?intent=propietario&auth_method=email`;
+                return; // Salir para evitar setIsLoading(false)
             } else {
+                // Signup
                 const { data, error } = await supabase.auth.signUp({
                     email: email.trim(),
                     password: password.trim(),
@@ -153,18 +144,10 @@ function AuthContent() {
                     return;
                 }
 
-                // Insert user into database with tipo_usuario from intent param
-                if (data?.user && data.user.email) {
-                    await supabase
-                        .from('usuarios')
-                        .upsert({
-                            id: data.user.id,
-                            email: data.user.email,
-                            nombre: email.split('@')[0],
-                            rol: 'usuario',
-                            tipo_usuario: intent as 'propietario' | 'inquilino' | 'ambos'
-                        } as any, { onConflict: 'id' });
-                }
+                // Signup exitoso: Forzar recarga hacia el servidor
+                console.log('✅ [Auth] Email signup success - redirecting to server callback');
+                window.location.href = `${window.location.origin}/auth/callback?intent=propietario&auth_method=email`;
+                return; // Salir para evitar setIsLoading(false)
             }
         } catch (err: any) {
             setError(err.message || 'Ocurrió un error. Intenta de nuevo.');

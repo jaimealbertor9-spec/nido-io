@@ -2,26 +2,47 @@ import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
 
-// Valid security roles
-type UserRole = 'admin' | 'usuario' | null;
+/**
+ * ══════════════════════════════════════════════════════════════════════════════
+ * NIDO - AUTH CALLBACK (SERVIDOR ÚNICO DECISOR)
+ * ══════════════════════════════════════════════════════════════════════════════
+ * 
+ * Este archivo es la ÚNICA autoridad de redirección post-login.
+ * 
+ * Flujos soportados:
+ * - OAuth (Google/Facebook): Viene con ?code=... 
+ * - Email/Password: Viene con ?auth_method=email (sin code, sesión ya en cookies)
+ * 
+ * El cliente NUNCA decide a dónde ir. Solo el servidor.
+ * ══════════════════════════════════════════════════════════════════════════════
+ */
+
+// Mapeo intent → destino (WHITELIST ESTRICTA)
+const DESTINATIONS_BY_INTENT: Record<string, string> = {
+    propietario: '/mis-inmuebles',
+    inquilino: '/buscar', // Futuro
+} as const;
+
+// Destino por defecto si intent inválido
+const DEFAULT_DESTINATION = '/bienvenidos';
 
 export async function GET(request: NextRequest) {
     const requestUrl = new URL(request.url);
     const code = requestUrl.searchParams.get('code');
-    const next = requestUrl.searchParams.get('next') ?? '/seleccion-rol';
+    const intent = requestUrl.searchParams.get('intent');
+    const authMethod = requestUrl.searchParams.get('auth_method');
     const origin = requestUrl.origin;
 
-    console.log('🔄 Auth Callback: Processing OAuth code exchange...');
-
-    if (!code) {
-        console.error('❌ No auth code provided');
-        return NextResponse.redirect(`${origin}/auth/login?error=no_code`);
-    }
+    console.log('🔄 [Auth Callback] Processing...', {
+        hasCode: !!code,
+        intent,
+        authMethod
+    });
 
     try {
         const cookieStore = await cookies();
 
-        // Create Supabase server client with cookie handling
+        // Crear cliente Supabase server-side
         const supabase = createServerClient(
             process.env.NEXT_PUBLIC_SUPABASE_URL!,
             process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -34,7 +55,6 @@ export async function GET(request: NextRequest) {
                         try {
                             cookieStore.set({ name, value, ...options });
                         } catch (error) {
-                            // Handle cookie setting in middleware/edge runtime
                             console.warn('Cookie set warning:', error);
                         }
                     },
@@ -49,81 +69,80 @@ export async function GET(request: NextRequest) {
             }
         );
 
-        // Exchange code for session
-        const { data: sessionData, error: sessionError } = await supabase.auth.exchangeCodeForSession(code);
+        // ══════════════════════════════════════════════════════════════════
+        // PASO 1: Autenticación (OAuth o Email)
+        // ══════════════════════════════════════════════════════════════════
 
-        if (sessionError) {
-            console.error('❌ Code exchange failed:', sessionError.message);
-            return NextResponse.redirect(`${origin}/auth/login?error=auth_code_error`);
-        }
+        if (code) {
+            // OAuth: Intercambiar código por sesión
+            console.log('🔑 [Auth Callback] OAuth flow - exchanging code...');
+            const { data: sessionData, error: sessionError } = await supabase.auth.exchangeCodeForSession(code);
 
-        if (!sessionData?.user) {
-            console.error('❌ No user returned from code exchange');
-            return NextResponse.redirect(`${origin}/auth/login?error=no_user`);
-        }
-
-        const user = sessionData.user;
-        console.log('✅ Session established for:', user.email);
-
-        // Query the usuarios table to get the user's role
-        const { data: userData, error: dbError } = await supabase
-            .from('usuarios')
-            .select('rol')
-            .eq('id', user.id)
-            .maybeSingle();
-
-        if (dbError) {
-            console.error('⚠️ Error fetching user role:', dbError.message);
-            // Safe fallback - let the user select their role
-            return NextResponse.redirect(`${origin}/seleccion-rol`);
-        }
-
-        const userRole: UserRole = userData?.rol as UserRole ?? null;
-        console.log('📊 User role detected:', userRole);
-
-        // Smart Redirection based on Role
-        let redirectPath: string;
-
-        if (userRole === 'admin') {
-            redirectPath = '/admin/verificaciones';
-            console.log('🔐 Admin user - redirecting to admin panel');
-        } else if (userRole === 'usuario') {
-            // For regular users, we need to check tipo_usuario for routing
-            const { data: typeData } = await supabase
-                .from('usuarios')
-                .select('tipo_usuario')
-                .eq('id', user.id)
-                .maybeSingle();
-
-            const tipoUsuario = typeData?.tipo_usuario;
-
-            if (tipoUsuario === 'propietario') {
-                redirectPath = '/dashboard';
-                console.log('🏠 Propietario user - redirecting to dashboard');
-            } else if (tipoUsuario === 'inquilino') {
-                redirectPath = '/publicar/tipo';
-                console.log('🔍 Inquilino user - redirecting to publicar');
-            } else {
-                // User has security role but no business type
-                redirectPath = '/seleccion-rol';
-                console.log('⚠️ User missing tipo_usuario - redirecting to selection');
+            if (sessionError) {
+                console.error('❌ [Auth Callback] Code exchange failed:', sessionError.message);
+                return NextResponse.redirect(`${origin}/publicar/auth?error=auth_failed`);
             }
+
+            if (!sessionData?.user) {
+                console.error('❌ [Auth Callback] No user from code exchange');
+                return NextResponse.redirect(`${origin}/publicar/auth?error=no_user`);
+            }
+
+            console.log('✅ [Auth Callback] OAuth session established:', sessionData.user.email);
+
+            // Upsert del usuario en BD (fire and forget, no bloqueante)
+            (async () => {
+                try {
+                    await supabase.from('usuarios').upsert({
+                        id: sessionData.user.id,
+                        email: sessionData.user.email,
+                        nombre: sessionData.user.email?.split('@')[0] || 'Usuario',
+                        tipo_usuario: intent === 'propietario' ? 'propietario' : 'inquilino',
+                    }, { onConflict: 'id' });
+                    console.log('✅ [Auth Callback] User upserted');
+                } catch (err) {
+                    console.warn('⚠️ [Auth Callback] User upsert warning:', err);
+                }
+            })();
+
+        } else if (authMethod === 'email') {
+            // Email/Password: La sesión ya está en cookies, solo validar
+            console.log('📧 [Auth Callback] Email flow - validating session...');
+            const { data: { user }, error } = await supabase.auth.getUser();
+
+            if (error || !user) {
+                console.error('❌ [Auth Callback] Email session invalid:', error?.message);
+                return NextResponse.redirect(`${origin}/publicar/auth?error=session_invalid`);
+            }
+
+            console.log('✅ [Auth Callback] Email session valid:', user.email);
+
         } else {
-            // No role assigned - new user needs to complete onboarding
-            redirectPath = '/seleccion-rol';
-            console.log('👋 New user - redirecting to role selection');
+            // Sin code ni auth_method = acceso directo inválido
+            console.error('❌ [Auth Callback] Invalid access - no code or auth_method');
+            return NextResponse.redirect(`${origin}/publicar/auth?error=invalid_access`);
         }
 
-        // Use the 'next' param if it was explicitly provided and role exists
-        if (next !== '/seleccion-rol' && userRole) {
-            redirectPath = next;
-            console.log('📌 Using explicit next param:', next);
-        }
+        // ══════════════════════════════════════════════════════════════════
+        // PASO 2: Determinar destino (basado SOLO en intent)
+        // ══════════════════════════════════════════════════════════════════
 
-        return NextResponse.redirect(`${origin}${redirectPath}`);
+        // Sanitizar intent - solo valores permitidos
+        const validIntent = intent && DESTINATIONS_BY_INTENT[intent] ? intent : null;
+        const destination = validIntent
+            ? DESTINATIONS_BY_INTENT[validIntent]
+            : DEFAULT_DESTINATION;
+
+        console.log('🚀 [Auth Callback] Redirecting to:', destination, '(intent:', intent, ')');
+
+        // ══════════════════════════════════════════════════════════════════
+        // PASO 3: Redirect final (servidor decide, cliente obedece)
+        // ══════════════════════════════════════════════════════════════════
+
+        return NextResponse.redirect(`${origin}${destination}`);
 
     } catch (error) {
-        console.error('❌ Unexpected error in auth callback:', error);
-        return NextResponse.redirect(`${origin}/auth/login?error=auth_code_error`);
+        console.error('❌ [Auth Callback] Unexpected error:', error);
+        return NextResponse.redirect(`${origin}/publicar/auth?error=unexpected`);
     }
 }
