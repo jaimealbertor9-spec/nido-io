@@ -46,33 +46,9 @@ export async function createPropertyDraft(type: string, userId: string): Promise
 
     try {
         // ═══════════════════════════════════════════════════════════════
-        // DEFENSIVE UPSERT: Ensure public.usuarios exists before FK insert
+        // NOTE: User sync removed - Auth Callback is Single Source of Truth
+        // The DB trigger + /auth/callback ensures usuarios exists before draft
         // ═══════════════════════════════════════════════════════════════
-        const { data: authUser, error: authError } = await supabase.auth.admin.getUserById(userId);
-
-        if (authError || !authUser?.user) {
-            console.error('❌ [Action] Error fetching auth user:', authError);
-            throw new Error('Usuario no encontrado');
-        }
-
-        const user = authUser.user;
-
-        // Upsert into public.usuarios to ensure FK constraint is satisfied
-        const { error: userError } = await supabase.from('usuarios').upsert({
-            id: user.id,
-            email: user.email,
-            nombre: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Usuario',
-            avatar_url: user.user_metadata?.avatar_url || user.user_metadata?.picture || '',
-        }, {
-            onConflict: 'id',
-            ignoreDuplicates: false
-        });
-
-        if (userError) {
-            console.warn('⚠️ [Action] User sync warning (continuing):', userError.message);
-        } else {
-            console.log('✅ [Action] User synced to public.usuarios:', user.id);
-        }
 
         // ═══════════════════════════════════════════════════════════════
         // 1. Strict Search: Find draft matching User + Type + Status
