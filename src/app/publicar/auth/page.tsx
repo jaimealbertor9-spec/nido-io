@@ -47,6 +47,24 @@ function AuthContent() {
     // El cliente solo escucha eventos para mostrar UI de carga
     // ============================================================
     useEffect(() => {
+        // Check for EXISTING session on mount
+        // If user is already logged in, redirect them through callback for role enrichment
+        const checkExistingSession = async () => {
+            const { data: { session } } = await supabase.auth.getSession();
+
+            if (session?.user) {
+                console.log('🔄 [Auth] Existing session detected - redirecting through callback for role enrichment');
+                setIsRedirecting(true);
+                // Force through callback to trigger role update (UPSERT)
+                // auth_method=auto_refresh indicates this is not a fresh login
+                window.location.href = `${window.location.origin}/auth/callback?intent=${intent}&auth_method=auto_refresh`;
+                return;
+            }
+        };
+
+        checkExistingSession();
+
+        // Also listen for auth state changes (new logins)
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             (event, session) => {
                 console.log('📡 [Auth] Event:', event);
@@ -58,7 +76,7 @@ function AuthContent() {
             }
         );
         return () => subscription.unsubscribe();
-    }, []);
+    }, [intent]);
 
     // ============================================================
     // HANDLERS

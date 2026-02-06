@@ -1,6 +1,7 @@
 'use server';
 
 import { createClient } from '@supabase/supabase-js';
+import { createServerSupabaseClient } from '@/lib/supabase-server';
 
 // Initialize Supabase with service role for server-side operations
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -8,18 +9,32 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.
 
 /**
  * Creates a property draft in the database
+ * 
+ * SECURITY: User ID is derived from authenticated session, NOT from client args.
+ * 
  * @param type - The type of property (apartamento, casa, habitacion, local, lote)
- * @param userId - The authenticated user's ID
  * @returns The new property draft ID
  */
-export async function createPropertyDraft(type: string, userId: string): Promise<string> {
-    console.log(`🚀 [Action] Creating draft for User: ${userId}, Type: ${type}`);
+export async function createPropertyDraft(type: string): Promise<string> {
+    console.log(`🚀 [Action] Creating draft for Type: ${type}`);
 
-    // Validate inputs
-    if (!userId) {
-        throw new Error('User not authenticated');
+    // ═══════════════════════════════════════════════════════════════
+    // STEP 1: Authenticate from session (SECURE - not from args)
+    // ═══════════════════════════════════════════════════════════════
+    const supabaseAuth = createServerSupabaseClient();
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+
+    if (authError || !user) {
+        console.error('❌ [Action] Unauthorized - no session:', authError?.message);
+        throw new Error('Unauthorized');
     }
 
+    const userId = user.id;
+    console.log(`✅ [Action] Authenticated user: ${user.email}`);
+
+    // ═══════════════════════════════════════════════════════════════
+    // STEP 2: Validate type
+    // ═══════════════════════════════════════════════════════════════
     if (!type) {
         throw new Error('Property type is required');
     }
@@ -41,7 +56,7 @@ export async function createPropertyDraft(type: string, userId: string): Promise
         throw new Error(`Invalid property type: ${type}`);
     }
 
-    // Create Supabase client for server
+    // Create Supabase client with SERVICE_ROLE for DB operations
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     try {
@@ -51,7 +66,7 @@ export async function createPropertyDraft(type: string, userId: string): Promise
         // ═══════════════════════════════════════════════════════════════
 
         // ═══════════════════════════════════════════════════════════════
-        // 1. Strict Search: Find draft matching User + Type + Status
+        // STEP 3: Strict Search - Find draft matching User + Type + Status
         // ═══════════════════════════════════════════════════════════════
         const { data: existingDraft, error: searchError } = await supabase
             .from('inmuebles')
@@ -72,7 +87,7 @@ export async function createPropertyDraft(type: string, userId: string): Promise
         }
 
         // ═══════════════════════════════════════════════════════════════
-        // 2. Strict Creation: Provide ALL required fields
+        // STEP 4: Strict Creation - Provide ALL required fields
         // ═══════════════════════════════════════════════════════════════
         console.log('🆕 [Action] Creating NEW draft...');
         const { data: newDraft, error: insertError } = await supabase

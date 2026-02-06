@@ -1,6 +1,7 @@
 'use server';
 
 import { createClient } from '@supabase/supabase-js';
+import { createServerSupabaseClient } from '@/lib/supabase-server';
 import { revalidatePath } from 'next/cache';
 import type { UpdateLocationResult } from './action-types';
 
@@ -13,6 +14,9 @@ export type { UpdateLocationResult } from './action-types';
 
 /**
  * Updates the location details of a property draft
+ * 
+ * SECURITY: Session-based auth + ownership check prevents IDOR attacks
+ * 
  * @param propertyId - The property ID to update
  * @param address - The exact address
  * @param neighborhood - The neighborhood (barrio)
@@ -31,6 +35,17 @@ export async function updatePropertyLocation(
     longitud: number | null = null,
     ciudad: string = 'Líbano'
 ): Promise<UpdateLocationResult> {
+    // ═══════════════════════════════════════════════════════════════
+    // STEP A: Auth Check (Session-Based)
+    // ═══════════════════════════════════════════════════════════════
+    const supabaseAuth = createServerSupabaseClient();
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+
+    if (authError || !user) {
+        console.error('❌ [updateLocation] Unauthorized - no session');
+        return { success: false, error: 'Unauthorized' };
+    }
+
     // Validate inputs
     if (!propertyId) {
         return { success: false, error: 'Property ID is required' };
@@ -48,7 +63,24 @@ export async function updatePropertyLocation(
         // Create Supabase client for server
         const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-        // Update property location data
+        // ═══════════════════════════════════════════════════════════════
+        // STEP B: Ownership Check (IDOR Protection)
+        // ═══════════════════════════════════════════════════════════════
+        const { data: property, error: ownerError } = await supabase
+            .from('inmuebles')
+            .select('id')
+            .eq('id', propertyId)
+            .eq('propietario_id', user.id)
+            .single();
+
+        if (ownerError || !property) {
+            console.error('🚫 [updateLocation] IDOR blocked - user does not own property');
+            return { success: false, error: 'Unauthorized: You do not own this property' };
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // STEP C: Execute Update (Ownership Verified)
+        // ═══════════════════════════════════════════════════════════════
         const { error } = await supabase
             .from('inmuebles')
             .update({

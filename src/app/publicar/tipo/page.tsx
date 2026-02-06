@@ -99,13 +99,12 @@ function TipoContent() {
                 return;
             }
 
-            const userId = user.id;
             console.log(`✅ [Tipo] User authenticated: ${user.email}`);
             console.log(`🆕 [Tipo] Requesting draft for type: ${selectedType}`);
 
-            // DIRECTLY call the Server Action. 
+            // DIRECTLY call the Server Action (session-based auth)
             // It handles checking for existing drafts of THIS specific type internally.
-            const draftId = await createPropertyDraft(selectedType, userId);
+            const draftId = await createPropertyDraft(selectedType);
 
             if (!draftId) {
                 throw new Error('No se pudo crear el borrador (ID inválido)');

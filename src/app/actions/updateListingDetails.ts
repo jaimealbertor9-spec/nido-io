@@ -1,6 +1,7 @@
 'use server';
 
 import { createClient } from '@supabase/supabase-js';
+import { createServerSupabaseClient } from '@/lib/supabase-server';
 import { revalidatePath } from 'next/cache';
 import type { UpdateListingResult } from './action-types';
 
@@ -8,31 +9,14 @@ import type { UpdateListingResult } from './action-types';
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-// ═══════════════════════════════════════════════════════════════════════════
-// DEBUG: Environment Variable Verification (Remove after debugging)
-// ═══════════════════════════════════════════════════════════════════════════
-const DEBUG_ENV = true; // Set to false to disable logging
-
-if (DEBUG_ENV) {
-    console.log('🔧 [DEBUG] Supabase Environment Check:');
-    console.log('   - NEXT_PUBLIC_SUPABASE_URL defined:', !!supabaseUrl);
-    console.log('   - URL starts with https:', supabaseUrl?.startsWith('https://'));
-    console.log('   - SUPABASE_SERVICE_ROLE_KEY defined:', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
-    console.log('   - NEXT_PUBLIC_SUPABASE_ANON_KEY defined:', !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
-    console.log('   - Using key type:', process.env.SUPABASE_SERVICE_ROLE_KEY ? 'SERVICE_ROLE' : 'ANON');
-    if (!supabaseUrl) {
-        console.error('❌ [CRITICAL] NEXT_PUBLIC_SUPABASE_URL is undefined!');
-    }
-    if (!supabaseServiceKey) {
-        console.error('❌ [CRITICAL] No Supabase key available!');
-    }
-}
-
 // Re-export the type for consumers
 export type { UpdateListingResult } from './action-types';
 
 /**
  * Updates all final listing details including title, description, price, and offer type
+ * 
+ * SECURITY: Session-based auth + ownership check prevents IDOR attacks
+ * 
  * @param propertyId - The property ID
  * @param title - The ad title (max 60 chars)
  * @param description - The detailed description
@@ -49,6 +33,17 @@ export async function updateListingDetails(
     keywords?: string[]
 ): Promise<UpdateListingResult> {
     try {
+        // ═══════════════════════════════════════════════════════════════
+        // STEP A: Auth Check (Session-Based)
+        // ═══════════════════════════════════════════════════════════════
+        const supabaseAuth = createServerSupabaseClient();
+        const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+
+        if (authError || !user) {
+            console.error('❌ [updateListingDetails] Unauthorized - no session');
+            return { success: false, error: 'Unauthorized' };
+        }
+
         // Validate inputs
         if (!propertyId) {
             return { success: false, error: 'Property ID is required' };
@@ -76,7 +71,24 @@ export async function updateListingDetails(
 
         const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-        // Update property with all details
+        // ═══════════════════════════════════════════════════════════════
+        // STEP B: Ownership Check (IDOR Protection)
+        // ═══════════════════════════════════════════════════════════════
+        const { data: property, error: ownerError } = await supabase
+            .from('inmuebles')
+            .select('id')
+            .eq('id', propertyId)
+            .eq('propietario_id', user.id)
+            .single();
+
+        if (ownerError || !property) {
+            console.error('🚫 [updateListingDetails] IDOR blocked - user does not own property');
+            return { success: false, error: 'Unauthorized: You do not own this property' };
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // STEP C: Execute Update (Ownership Verified)
+        // ═══════════════════════════════════════════════════════════════
         const { error } = await supabase
             .from('inmuebles')
             .update({

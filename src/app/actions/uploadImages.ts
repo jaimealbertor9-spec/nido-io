@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient } from '@supabase/supabase-js'
+import { createServerSupabaseClient } from '@/lib/supabase-server'
 import type { PropertyImageData } from './action-types'
 
 // Inicializamos el cliente con permisos de administrador para poder subir archivos sin bloqueos
@@ -12,6 +13,11 @@ const supabase = createClient(
 // Re-export the type for consumers (type-only exports are allowed)
 export type { PropertyImageData } from './action-types';
 
+/**
+ * Uploads a property image
+ * 
+ * SECURITY: Session-based auth + ownership check prevents IDOR attacks
+ */
 export async function uploadPropertyImage(formData: FormData) {
     const file = formData.get('file') as File
     const inmuebleId = formData.get('inmuebleId') as string
@@ -22,6 +28,35 @@ export async function uploadPropertyImage(formData: FormData) {
     }
 
     try {
+        // ═══════════════════════════════════════════════════════════════
+        // STEP A: Auth Check (Session-Based)
+        // ═══════════════════════════════════════════════════════════════
+        const supabaseAuth = createServerSupabaseClient();
+        const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+
+        if (authError || !user) {
+            console.error('❌ [uploadImage] Unauthorized - no session');
+            return { success: false, error: 'Unauthorized' };
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // STEP B: Ownership Check (IDOR Protection)
+        // ═══════════════════════════════════════════════════════════════
+        const { data: property, error: ownerError } = await supabase
+            .from('inmuebles')
+            .select('id')
+            .eq('id', inmuebleId)
+            .eq('propietario_id', user.id)
+            .single();
+
+        if (ownerError || !property) {
+            console.error('🚫 [uploadImage] IDOR blocked - user does not own property');
+            return { success: false, error: 'Unauthorized: You do not own this property' };
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // STEP C: Execute Upload (Ownership Verified)
+        // ═══════════════════════════════════════════════════════════════
         // 1. Generar nombre único: ID_INMUEBLE/CATEGORIA-FECHA.jpg
         const fileExt = file.name.split('.').pop()
         const fileName = `${inmuebleId}/${category}-${Date.now()}.${fileExt}`

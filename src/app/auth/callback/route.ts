@@ -127,19 +127,20 @@ export async function GET(request: NextRequest) {
             userEmail = sessionData.user.email ?? null;
             console.log('✅ [Auth Callback] OAuth session established:', userEmail);
 
-        } else if (authMethod === 'email') {
-            // Email/Password: La sesión ya está en cookies, solo validar
-            console.log('📧 [Auth Callback] Email flow - validating session...');
+        } else if (authMethod === 'email' || authMethod === 'auto_refresh') {
+            // Email/Password OR Auto-refresh: Session already in cookies, just validate
+            // auto_refresh = user already logged in, coming to update role
+            console.log(`📧 [Auth Callback] ${authMethod} flow - validating session...`);
             const { data: { user }, error } = await supabaseSession.auth.getUser();
 
             if (error || !user) {
-                console.error('❌ [Auth Callback] Email session invalid:', error?.message);
+                console.error('❌ [Auth Callback] Session invalid:', error?.message);
                 return NextResponse.redirect(`${origin}/publicar/auth?error=session_invalid`);
             }
 
             userId = user.id;
             userEmail = user.email ?? null;
-            console.log('✅ [Auth Callback] Email session valid:', userEmail);
+            console.log(`✅ [Auth Callback] ${authMethod} session valid:`, userEmail);
 
         } else {
             // Sin code ni auth_method = acceso directo inválido
