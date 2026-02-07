@@ -4,24 +4,68 @@ import { resend } from '@/lib/resend';
 import { PaymentSuccessEmail } from '@/components/emails/PaymentSuccessEmail';
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// WOMPI WEBHOOK HANDLER
+// WOMPI WEBHOOK HANDLER - FAIL-CLOSED SECURITY
 // Handles transaction.updated events from Wompi payment gateway
+// ALL requests MUST have valid signature - no exceptions
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export async function POST(request: Request): Promise<Response> {
   console.log('═══════════════════════════════════════════════════════════════');
   console.log('[WOMPI WEBHOOK] 📨 Received event at:', new Date().toISOString());
 
-  // 🛡️ RUNTIME ENV LOADING (Read variables only at request time)
-  const WOMPI_EVENTS_SECRET = process.env.WOMPI_EVENTS_SECRET || '';
-  const WOMPI_INTEGRITY_SECRET = process.env.WOMPI_INTEGRITY_SECRET || '';
+  // ═══════════════════════════════════════════════════════════════════════════
+  // STEP 1: CRITICAL ENVIRONMENT CHECK (Fail-Closed Gate #1)
+  // ═══════════════════════════════════════════════════════════════════════════
+  const WOMPI_EVENTS_SECRET = process.env.WOMPI_EVENTS_SECRET;
   const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
   const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+
+  if (!WOMPI_EVENTS_SECRET) {
+    console.error('[WOMPI WEBHOOK] ❌ CRITICAL: WOMPI_EVENTS_SECRET not configured');
+    return Response.json({ error: 'Server Misconfiguration' }, { status: 500 });
+  }
 
   try {
     // Parse the webhook payload
     const evento = await request.json();
     console.log('[WOMPI WEBHOOK] Event type:', evento.event);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // STEP 2: STRICT SIGNATURE EXTRACTION (Fail-Closed Gate #2)
+    // ═══════════════════════════════════════════════════════════════════════════
+    const checksum = evento.signature?.checksum;
+
+    if (!checksum) {
+      console.error('[WOMPI WEBHOOK] ❌ Missing signature in request - BLOCKED');
+      return Response.json({ error: 'Missing Signature' }, { status: 401 });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // STEP 3: MANDATORY SIGNATURE VALIDATION (Fail-Closed Gate #3)
+    // ═══════════════════════════════════════════════════════════════════════════
+    const properties = evento.signature.properties || [];
+    let signatureString = '';
+
+    // Build signature string from properties
+    for (const prop of properties) {
+      const value = prop.split('.').reduce((obj: any, key: string) => obj?.[key], evento.data);
+      signatureString += value;
+    }
+    signatureString += evento.timestamp + WOMPI_EVENTS_SECRET;
+
+    const calculatedChecksum = createHash('sha256').update(signatureString).digest('hex');
+
+    if (calculatedChecksum !== checksum) {
+      console.error('[WOMPI WEBHOOK] ❌ Invalid Signature - BLOCKED');
+      // Do NOT log expected vs calculated in production (security best practice)
+      return Response.json({ error: 'Invalid Signature' }, { status: 401 });
+    }
+
+    console.log('[WOMPI WEBHOOK] ✅ Signature verified - proceeding with business logic');
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // STEP 4: BUSINESS LOGIC (Only reachable if signature is valid)
+    // ═══════════════════════════════════════════════════════════════════════════
 
     // Validate event structure
     if (!evento.data?.transaction) {
@@ -33,35 +77,6 @@ export async function POST(request: Request): Promise<Response> {
     const { id, reference, status, amount_in_cents } = transaction;
 
     console.log('[WOMPI WEBHOOK] Transaction:', { id, reference, status, amount_in_cents });
-
-    // ─────────────────────────────────────────────────────────────────────
-    // STEP 1: VERIFY SIGNATURE (Using Events Secret or Integrity Secret)
-    // ─────────────────────────────────────────────────────────────────────
-    if (evento.signature?.checksum && (WOMPI_EVENTS_SECRET || WOMPI_INTEGRITY_SECRET)) {
-      const secret = WOMPI_EVENTS_SECRET || WOMPI_INTEGRITY_SECRET;
-      // Wompi checksum: SHA256(properties + timestamp + secret)
-      const properties = evento.signature.properties || [];
-      let signatureString = '';
-
-      // Build signature string from properties
-      for (const prop of properties) {
-        const value = prop.split('.').reduce((obj: any, key: string) => obj?.[key], evento.data);
-        signatureString += value;
-      }
-      signatureString += evento.timestamp + secret;
-
-      const calculatedChecksum = createHash('sha256').update(signatureString).digest('hex');
-
-      if (calculatedChecksum !== evento.signature.checksum) {
-        console.error('[WOMPI WEBHOOK] ❌ Invalid signature');
-        console.error('[WOMPI WEBHOOK] Expected:', evento.signature.checksum);
-        console.error('[WOMPI WEBHOOK] Calculated:', calculatedChecksum);
-        return Response.json({ success: false, error: 'Invalid signature' }, { status: 400 });
-      }
-      console.log('[WOMPI WEBHOOK] ✅ Signature verified');
-    } else {
-      console.log('[WOMPI WEBHOOK] ⚠️ Skipping signature verification (no secret configured)');
-    }
 
     // ─────────────────────────────────────────────────────────────────────
     // STEP 2: ONLY PROCESS APPROVED TRANSACTIONS
