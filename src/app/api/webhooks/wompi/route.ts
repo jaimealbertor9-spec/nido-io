@@ -103,6 +103,30 @@ export async function POST(request: Request): Promise<Response> {
       auth: { persistSession: false }
     });
 
+    // ═══════════════════════════════════════════════════════════════════
+    // STEP 3.5: IDEMPOTENCY CHECK
+    // If this transaction.id has already been processed as 'aprobado',
+    // return 200 immediately to prevent duplicate business logic.
+    // ═══════════════════════════════════════════════════════════════════
+    const { data: existingPayment } = await supabase
+      .from('pagos')
+      .select('id, estado')
+      .eq('wompi_transaction_id', id)
+      .maybeSingle();
+
+    if (existingPayment && existingPayment.estado === 'aprobado') {
+      await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Idempotency: transaction already processed - skipping', {
+        transactionId: id,
+        pagoId: existingPayment.id,
+        reference
+      });
+      return Response.json({
+        success: true,
+        message: 'Transaction already processed (idempotent)',
+        pagoId: existingPayment.id
+      });
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // STEP 4A: UPDATE PAYMENT RECORD (pagos table)
     // ─────────────────────────────────────────────────────────────────────
@@ -124,7 +148,7 @@ export async function POST(request: Request): Promise<Response> {
       await logSystemEvent('WARN', 'WOMPI_WEBHOOK', 'Payment record not found, attempting fallback resolution', { reference, error: pagoError?.message });
 
       // ═══════════════════════════════════════════════════════════════════
-      // NEW: Extract property ID from redirect_url (draftId passthrough)
+      // FALLBACK: Extract property ID from redirect_url (draftId passthrough)
       // This handles Wompi Payment Links with opaque references (test_...)
       // ═══════════════════════════════════════════════════════════════════
       let propertyId: string | null = null;
@@ -137,7 +161,6 @@ export async function POST(request: Request): Promise<Response> {
           const urlObj = new URL(redirectUrl);
           propertyId = urlObj.searchParams.get('draftId');
         } catch (e) {
-          // Fallback to regex if URL parsing fails
           const match = redirectUrl.match(/draftId=([a-f0-9-]+)/i);
           if (match) propertyId = match[1];
         }
@@ -176,10 +199,6 @@ export async function POST(request: Request): Promise<Response> {
           .single();
 
         if (inmueble) {
-          // Fetch property details for email
-          const propertyName = inmueble.titulo || undefined;
-          const propertyLocation = inmueble.ciudad || undefined;
-          const propertyPrice = inmueble.precio || undefined;
           // Insert new payment record
           const { data: newPago, error: insertError } = await supabase
             .from('pagos')
@@ -197,19 +216,32 @@ export async function POST(request: Request): Promise<Response> {
             .single();
 
           if (insertError) {
-            console.error('[WOMPI WEBHOOK] ❌ Failed to insert payment:', insertError);
+            await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', 'Failed to insert payment record', {
+              reference, propertyId: inmueble.id, error: insertError.message
+            });
             return Response.json({ success: false, error: 'Failed to record payment' });
           }
 
-          await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Payment created via draftId fallback', { pagoId: newPago?.id, propertyId: inmueble.id, reference });
+          await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Payment created via draftId fallback', {
+            pagoId: newPago?.id, propertyId: inmueble.id, reference
+          });
 
-          // Continue with inmueble update using the new payment
-          await updateInmueble(supabase, inmueble.id, newPago?.id);
+          // Update property status
+          const updateOk = await updateInmueble(supabase, inmueble.id, newPago?.id);
+          if (!updateOk) {
+            await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', 'PAYMENT RECORDED BUT PROPERTY UPDATE FAILED — requires manual intervention', {
+              pagoId: newPago?.id, propertyId: inmueble.id, reference
+            });
+          }
 
-          // Send confirmation email with property details
-          const customerEmail = transaction.customer_email;
-          const customerName = transaction.customer_data?.full_name || 'Usuario';
-          await sendPaymentConfirmationEmail(customerEmail, customerName, propertyName, propertyLocation, propertyPrice);
+          // Send ONE confirmation email
+          await sendPaymentConfirmationEmail(
+            transaction.customer_email,
+            transaction.customer_data?.full_name || 'Usuario',
+            inmueble.titulo || undefined,
+            inmueble.ciudad || undefined,
+            inmueble.precio || undefined
+          );
 
           return Response.json({
             success: true,
@@ -227,21 +259,29 @@ export async function POST(request: Request): Promise<Response> {
       });
     }
 
-    await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Payment updated successfully', { pagoId: pago.id, inmuebleId: pago.inmueble_id, reference });
+    await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Payment updated successfully', {
+      pagoId: pago.id, inmuebleId: pago.inmueble_id, reference
+    });
 
     // ─────────────────────────────────────────────────────────────────────
     // STEP 4B: UPDATE INMUEBLE (Property table)
     // ─────────────────────────────────────────────────────────────────────
     if (pago.inmueble_id) {
-      await updateInmueble(supabase, pago.inmueble_id, pago.id);
+      const updateOk = await updateInmueble(supabase, pago.inmueble_id, pago.id);
+      if (!updateOk) {
+        await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', 'PAYMENT RECORDED BUT PROPERTY UPDATE FAILED — requires manual intervention', {
+          pagoId: pago.id, inmuebleId: pago.inmueble_id, reference
+        });
+      }
     } else {
-      console.log('[WOMPI WEBHOOK] ⚠️ No inmueble_id associated with payment');
+      await logSystemEvent('WARN', 'WOMPI_WEBHOOK', 'No inmueble_id associated with payment', {
+        pagoId: pago.id, reference
+      });
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // STEP 5: SEND CONFIRMATION EMAIL
+    // STEP 5: SEND ONE CONFIRMATION EMAIL
     // ─────────────────────────────────────────────────────────────────────
-    // Fetch property details for email
     let propertyName: string | undefined;
     let propertyLocation: string | undefined;
     let propertyPrice: number | undefined;
@@ -260,9 +300,13 @@ export async function POST(request: Request): Promise<Response> {
       }
     }
 
-    const customerEmail = transaction.customer_email;
-    const customerName = transaction.customer_data?.full_name || 'Usuario';
-    await sendPaymentConfirmationEmail(customerEmail, customerName, propertyName, propertyLocation, propertyPrice);
+    await sendPaymentConfirmationEmail(
+      transaction.customer_email,
+      transaction.customer_data?.full_name || 'Usuario',
+      propertyName,
+      propertyLocation,
+      propertyPrice
+    );
 
     await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Webhook processing complete', { pagoId: pago.id, reference });
 
@@ -288,8 +332,11 @@ export async function POST(request: Request): Promise<Response> {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPER: Update Inmueble after successful payment
+// Returns true if update succeeded, false if it failed.
+// Email sending has been REMOVED from here to prevent duplicates.
+// The main flow is the single source of email sending.
 // ─────────────────────────────────────────────────────────────────────────────
-async function updateInmueble(supabase: any, inmuebleId: string, pagoId: string | undefined) {
+async function updateInmueble(supabase: any, inmuebleId: string, pagoId: string | undefined): Promise<boolean> {
   const now = new Date();
   const expiration = new Date(now);
   expiration.setDate(expiration.getDate() + 30); // 30 days from now
@@ -309,45 +356,11 @@ async function updateInmueble(supabase: any, inmuebleId: string, pagoId: string 
 
   if (inmuebleError) {
     console.error('[WOMPI WEBHOOK] ❌ Failed to update inmueble:', inmuebleError);
-  } else {
-    console.log('[WOMPI WEBHOOK] ✅ Inmueble updated to en_revision with 30-day expiration');
-
-    // Send payment confirmation email
-    try {
-      // 1. Get property details for the email
-      const { data: propiedad } = await supabase
-        .from('inmuebles')
-        .select('titulo, ciudad, precio, propietario_id')
-        .eq('id', inmuebleId)
-        .single();
-
-      if (propiedad?.propietario_id) {
-        // 2. Get user email and name
-        const { data: usuario } = await supabase
-          .from('usuarios')
-          .select('email, nombre')
-          .eq('id', propiedad.propietario_id)
-          .single();
-
-        if (usuario?.email) {
-          await resend.emails.send({
-            from: 'Nido <onboarding@resend.dev>',
-            to: usuario.email,
-            subject: '¡Pago Recibido! Tu inmueble está en revisión 🏡',
-            react: PaymentSuccessEmail({
-              nombre: usuario.nombre || 'Usuario',
-              propertyName: propiedad.titulo,
-              propertyLocation: propiedad.ciudad,
-              propertyPrice: propiedad.precio
-            }),
-          });
-          console.log('[WOMPI WEBHOOK] 📧 Email de confirmación enviado a:', usuario.email);
-        }
-      }
-    } catch (emailError: any) {
-      console.error('[WOMPI WEBHOOK] ⚠️ Falló el envío del email de pago:', emailError.message);
-    }
+    return false;
   }
+
+  console.log('[WOMPI WEBHOOK] ✅ Inmueble updated to en_revision with 30-day expiration');
+  return true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
