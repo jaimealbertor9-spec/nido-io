@@ -58,32 +58,41 @@ export default function PropertyDetailsPage() {
     const propertyId = params.id as string;
 
     useEffect(() => {
-        let isMounted = true;
+        const controller = new AbortController();
+        let cancelled = false; // local flag — immune to re-mount race
+
+        console.log('[Details] Mounted details page, propertyId:', propertyId, 'user:', !!user);
 
         // CASE 1: No propertyId - nothing to fetch
-        if (!propertyId) return;
+        if (!propertyId) {
+            setLoading(false);
+            return;
+        }
 
         // CASE 2: No user yet (auth still resolving or logged out)
-        // → Turn off loading immediately, don't attempt fetch
         if (!user) {
             setLoading(false);
             return;
         }
 
-        // WATCHDOG: Force unlock after 5s if DB hangs (Vercel safety net)
+        // WATCHDOG: Force unlock after 8s if DB hangs (Vercel safety net)
         const watchdog = setTimeout(() => {
-            if (isMounted) {
-                console.warn('⚠️ Details fetch timeout: Force releasing loading state after 5s');
+            if (!controller.signal.aborted) {
+                console.warn('[Details] ⚠️ Fetch timeout: Force releasing loading state after 8s');
                 setLoading(false);
             }
-        }, 5000);
+        }, 8000);
 
         async function fetchProperty() {
-            try {
-                setLoading(true);
+            console.log('[Details] Fetching data for ID:', propertyId);
+            setLoading(true);
+            setNotFound(false);
+            setProperty(null);
 
-                // ⚡️ ARCHITECTURE FIX: Force session handshake to wake up connection
+            try {
+                // Force session handshake to wake up connection
                 const { error: authError } = await supabase.auth.getUser();
+                if (cancelled) return;
                 if (authError) throw authError;
 
                 const { data, error } = await supabase
@@ -92,39 +101,48 @@ export default function PropertyDetailsPage() {
                     .eq('id', propertyId)
                     .single();
 
+                if (cancelled) return;
+
                 if (error || !data) {
-                    if (isMounted) setNotFound(true);
+                    console.warn('[Details] No data or error:', error?.message);
+                    setNotFound(true);
                     return;
                 }
 
-                if (isMounted) {
-                    // Safe-cast: coalesce nullable arrays and new columns
-                    const safeProperty: Property = {
-                        ...data,
-                        titulo: data.titulo ?? 'Sin título',
-                        precio: data.precio ?? 0,
-                        servicios: Array.isArray(data.servicios) ? data.servicios : [],
-                        amenities: Array.isArray(data.amenities) ? data.amenities : [],
-                        inmueble_imagenes: Array.isArray(data.inmueble_imagenes) ? data.inmueble_imagenes : [],
-                        administracion: data.administracion ?? null,
-                        video_url: data.video_url ?? null,
-                        video_file: data.video_file ?? null,
-                    };
-                    setProperty(safeProperty);
-                    // Set first image as selected
-                    if (safeProperty.inmueble_imagenes.length > 0) {
-                        const fachada = safeProperty.inmueble_imagenes.find(
-                            (img: PropertyImage) => img.category === 'fachada'
-                        );
-                        setSelectedImage(fachada?.url || safeProperty.inmueble_imagenes[0].url);
-                    }
+                console.log('[Details] Data received for:', data.titulo ?? propertyId);
+
+                // Safe-cast: coalesce nullable arrays and new columns
+                const safeProperty: Property = {
+                    ...data,
+                    titulo: data.titulo ?? 'Sin título',
+                    precio: data.precio ?? 0,
+                    servicios: Array.isArray(data.servicios) ? data.servicios : [],
+                    amenities: Array.isArray(data.amenities) ? data.amenities : [],
+                    inmueble_imagenes: Array.isArray(data.inmueble_imagenes) ? data.inmueble_imagenes : [],
+                    administracion: data.administracion ?? null,
+                    video_url: data.video_url ?? null,
+                    video_file: data.video_file ?? null,
+                };
+                setProperty(safeProperty);
+
+                // Set first image as selected
+                if (safeProperty.inmueble_imagenes.length > 0) {
+                    const fachada = safeProperty.inmueble_imagenes.find(
+                        (img: PropertyImage) => img.category === 'fachada'
+                    );
+                    setSelectedImage(fachada?.url || safeProperty.inmueble_imagenes[0].url);
                 }
-            } catch (err) {
-                console.error('Error fetching property:', err);
-                if (isMounted) setNotFound(true);
+            } catch (err: any) {
+                if (cancelled || err?.name === 'AbortError') {
+                    console.log('[Details] Fetch aborted (safe to ignore)');
+                    return;
+                }
+                console.error('[Details] Error fetching property:', err);
+                setNotFound(true);
             } finally {
-                clearTimeout(watchdog); // Kill watchdog on success or error
-                if (isMounted) {
+                clearTimeout(watchdog);
+                if (!cancelled) {
+                    console.log('[Details] Fetch cycle complete, stopping spinner');
                     setLoading(false);
                 }
             }
@@ -133,8 +151,10 @@ export default function PropertyDetailsPage() {
         fetchProperty();
 
         return () => {
-            isMounted = false;
-            clearTimeout(watchdog); // Cleanup on unmount
+            console.log('[Details] Cleanup — aborting pending fetches');
+            cancelled = true;
+            controller.abort();
+            clearTimeout(watchdog);
         };
     }, [propertyId, user]);
 
