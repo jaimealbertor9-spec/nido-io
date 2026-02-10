@@ -100,7 +100,7 @@ function RegisterContent() {
             if (propertyType && authData.user.id) {
                 console.log(`🏠 Creating property draft with type: ${propertyType}`);
                 try {
-                    const draftId = await createPropertyDraft(propertyType, authData.user.id);
+                    const draftId = await createPropertyDraft(propertyType);
                     console.log(`✅ Draft created: ${draftId}, redirecting to paso-1`);
                     router.push(`/publicar/crear/${draftId}/paso-1`);
                     return;

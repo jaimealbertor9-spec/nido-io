@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Fredoka } from 'next/font/google';
 import { ChevronLeft, ChevronRight, LucideIcon, Loader2 } from 'lucide-react';
 import NextImage from 'next/image';
-import { supabase } from '@/lib/supabase';
 import { createPropertyDraft } from '@/app/actions/publish';
 import { useAuth } from '@/components/AuthProvider';
 

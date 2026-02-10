@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { createClient } from '@supabase/supabase-js';
 import { resend } from '@/lib/resend';
 import { PaymentSuccessEmail } from '@/components/emails/PaymentSuccessEmail';
+import { logSystemEvent } from '@/lib/logger';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // WOMPI WEBHOOK HANDLER - FAIL-CLOSED SECURITY
@@ -21,7 +22,7 @@ export async function POST(request: Request): Promise<Response> {
   const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
   if (!WOMPI_EVENTS_SECRET) {
-    console.error('[WOMPI WEBHOOK] ❌ CRITICAL: WOMPI_EVENTS_SECRET not configured');
+    await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', 'WOMPI_EVENTS_SECRET not configured - all requests blocked');
     return Response.json({ error: 'Server Misconfiguration' }, { status: 500 });
   }
 
@@ -36,7 +37,10 @@ export async function POST(request: Request): Promise<Response> {
     const checksum = evento.signature?.checksum;
 
     if (!checksum) {
-      console.error('[WOMPI WEBHOOK] ❌ Missing signature in request - BLOCKED');
+      await logSystemEvent('WARN', 'WOMPI_WEBHOOK', 'Missing signature in request - BLOCKED', {
+        event_type: evento.event,
+        has_data: !!evento.data
+      });
       return Response.json({ error: 'Missing Signature' }, { status: 401 });
     }
 
@@ -56,12 +60,13 @@ export async function POST(request: Request): Promise<Response> {
     const calculatedChecksum = createHash('sha256').update(signatureString).digest('hex');
 
     if (calculatedChecksum !== checksum) {
-      console.error('[WOMPI WEBHOOK] ❌ Invalid Signature - BLOCKED');
-      // Do NOT log expected vs calculated in production (security best practice)
+      await logSystemEvent('ERROR', 'WOMPI_WEBHOOK', 'Invalid Signature - potential spoofing attempt BLOCKED', {
+        event_type: evento.event
+      });
       return Response.json({ error: 'Invalid Signature' }, { status: 401 });
     }
 
-    console.log('[WOMPI WEBHOOK] ✅ Signature verified - proceeding with business logic');
+    await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Signature verified - proceeding with business logic');
 
     // ═══════════════════════════════════════════════════════════════════════════
     // STEP 4: BUSINESS LOGIC (Only reachable if signature is valid)
@@ -76,7 +81,7 @@ export async function POST(request: Request): Promise<Response> {
     const { transaction } = evento.data;
     const { id, reference, status, amount_in_cents } = transaction;
 
-    console.log('[WOMPI WEBHOOK] Transaction:', { id, reference, status, amount_in_cents });
+    await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Processing transaction', { id, reference, status, amount_in_cents });
 
     // ─────────────────────────────────────────────────────────────────────
     // STEP 2: ONLY PROCESS APPROVED TRANSACTIONS
@@ -90,8 +95,7 @@ export async function POST(request: Request): Promise<Response> {
     // STEP 3: CONNECT TO DATABASE
     // ─────────────────────────────────────────────────────────────────────
     if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-      console.error('[WOMPI WEBHOOK] ❌ Missing database configuration');
-      // Return 200 to prevent Wompi retries, but log the error
+      await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', 'Missing database configuration', { reference });
       return Response.json({ success: false, error: 'Server configuration error' });
     }
 
@@ -117,8 +121,7 @@ export async function POST(request: Request): Promise<Response> {
       .single();
 
     if (pagoError || !pago) {
-      console.error('[WOMPI WEBHOOK] ❌ Payment not found or update failed:', pagoError);
-      console.log('[WOMPI WEBHOOK] Attempting to find inmueble from redirect_url or reference...');
+      await logSystemEvent('WARN', 'WOMPI_WEBHOOK', 'Payment record not found, attempting fallback resolution', { reference, error: pagoError?.message });
 
       // ═══════════════════════════════════════════════════════════════════
       // NEW: Extract property ID from redirect_url (draftId passthrough)
@@ -198,7 +201,7 @@ export async function POST(request: Request): Promise<Response> {
             return Response.json({ success: false, error: 'Failed to record payment' });
           }
 
-          console.log('[WOMPI WEBHOOK] ✅ Payment created:', newPago?.id);
+          await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Payment created via draftId fallback', { pagoId: newPago?.id, propertyId: inmueble.id, reference });
 
           // Continue with inmueble update using the new payment
           await updateInmueble(supabase, inmueble.id, newPago?.id);
@@ -224,7 +227,7 @@ export async function POST(request: Request): Promise<Response> {
       });
     }
 
-    console.log('[WOMPI WEBHOOK] ✅ Payment updated:', pago.id);
+    await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Payment updated successfully', { pagoId: pago.id, inmuebleId: pago.inmueble_id, reference });
 
     // ─────────────────────────────────────────────────────────────────────
     // STEP 4B: UPDATE INMUEBLE (Property table)
@@ -261,8 +264,7 @@ export async function POST(request: Request): Promise<Response> {
     const customerName = transaction.customer_data?.full_name || 'Usuario';
     await sendPaymentConfirmationEmail(customerEmail, customerName, propertyName, propertyLocation, propertyPrice);
 
-    console.log('[WOMPI WEBHOOK] ✅ Webhook processing complete');
-    console.log('═══════════════════════════════════════════════════════════════');
+    await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Webhook processing complete', { pagoId: pago.id, reference });
 
     return Response.json({
       success: true,
@@ -271,11 +273,14 @@ export async function POST(request: Request): Promise<Response> {
     });
 
   } catch (error: any) {
-    console.error('[WOMPI WEBHOOK] 💥 Unexpected error:', error.message);
+    await logSystemEvent('ERROR', 'WOMPI_WEBHOOK', 'Unexpected error during processing', {
+      error: error.message,
+      stack: error.stack?.substring(0, 500)
+    });
     // Return 200 to prevent Wompi retries (we'll handle it manually if needed)
     return Response.json({
       success: false,
-      error: error.message,
+      error: 'Internal processing error',
       note: 'Acknowledged to prevent retries'
     });
   }

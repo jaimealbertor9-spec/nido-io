@@ -125,25 +125,34 @@ export async function createPropertyDraft(type: string): Promise<string> {
  * Deletes a property draft from the database
  * Used for error recovery when a draft becomes corrupted or unloadable
  * 
+ * SECURITY: User ID is derived from authenticated session, NOT from client args.
+ * 
  * @param propertyId - The ID of the property draft to delete
- * @param userId - The authenticated user's ID (for ownership verification)
  * @returns Success status and optional error message
  */
 export async function deletePropertyDraft(
-    propertyId: string,
-    userId: string
+    propertyId: string
 ): Promise<{ success: boolean; error?: string }> {
     // Validate inputs
     if (!propertyId) {
         return { success: false, error: 'Property ID is required' };
     }
 
-    if (!userId) {
+    // ═══════════════════════════════════════════════════════════════
+    // STEP 1: Authenticate from session (SECURE - not from args)
+    // ═══════════════════════════════════════════════════════════════
+    const supabaseAuth = createServerSupabaseClient();
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+
+    if (authError || !user) {
+        console.error('[deletePropertyDraft] Unauthorized - no session:', authError?.message);
         return { success: false, error: 'User not authenticated' };
     }
 
+    const userId = user.id;
+
     try {
-        // Create Supabase client for server
+        // Create Supabase client with SERVICE_ROLE for DB operations
         const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
         // First verify ownership - only allow deleting own drafts
@@ -158,7 +167,7 @@ export async function deletePropertyDraft(
             return { success: false, error: 'Inmueble no encontrado' };
         }
 
-        // Ownership check
+        // Ownership check (using session-derived userId)
         if (property.propietario_id !== userId) {
             console.error('[deletePropertyDraft] Ownership mismatch');
             return { success: false, error: 'No tienes permiso para eliminar este inmueble' };

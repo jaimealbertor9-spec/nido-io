@@ -62,7 +62,6 @@ export default function Paso1Page() {
 
     // Fatal error state - shows recovery UI instead of redirecting
     const [fatalError, setFatalError] = useState<{ message: string; canDelete: boolean } | null>(null);
-    const [userId, setUserId] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
 
     // Location state
@@ -110,18 +109,7 @@ export default function Paso1Page() {
     // ═══════════════════════════════════════════════════════════════
     // LOAD EXISTING DATA (State Re-hydration)
     // ═══════════════════════════════════════════════════════════════
-    // ═══════════════════════════════════════════════════════════════
-    // LOAD USER ID ON MOUNT
-    // ═══════════════════════════════════════════════════════════════
-    useEffect(() => {
-        const loadUser = async () => {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user) {
-                setUserId(user.id);
-            }
-        };
-        loadUser();
-    }, []);
+
 
     // ═══════════════════════════════════════════════════════════════
     // LOAD EXISTING DATA (State Re-hydration) with Recovery Pattern
@@ -415,8 +403,8 @@ export default function Paso1Page() {
     // DELETE DRAFT HANDLER (for recovery from corrupted drafts)
     // ═══════════════════════════════════════════════════════════════
     const handleDeleteDraft = async () => {
-        if (!userId || !propertyId) {
-            setError('No se puede eliminar: usuario o ID no disponible');
+        if (!propertyId) {
+            setError('No se puede eliminar: ID no disponible');
             return;
         }
 
@@ -424,7 +412,7 @@ export default function Paso1Page() {
         setError(null);
 
         try {
-            const result = await deletePropertyDraft(propertyId, userId);
+            const result = await deletePropertyDraft(propertyId);
 
             if (result.success) {
                 console.log('✅ Draft deleted successfully, redirecting to tipo...');
@@ -471,7 +459,7 @@ export default function Paso1Page() {
 
                     {/* Action Buttons */}
                     <div className="space-y-3">
-                        {fatalError.canDelete && userId && (
+                        {fatalError.canDelete && (
                             <button
                                 onClick={handleDeleteDraft}
                                 disabled={isDeleting}
