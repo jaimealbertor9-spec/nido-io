@@ -7,7 +7,7 @@ import { useAuth } from '@/components/AuthProvider';
 import {
     ArrowLeft, MapPin, Bed, Bath, Maximize, Edit, Home, Phone,
     LayoutDashboard, Building, BarChart2, MessageSquare, Bell, Plus, LogOut,
-    CheckCircle, Clock, Eye, Zap, Sparkles, Layers
+    CheckCircle, Clock, Eye, Zap, Sparkles, Layers, Video, DollarSign
 } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
@@ -38,6 +38,10 @@ interface Property {
     servicios: string[];
     amenities: string[];
     inmueble_imagenes: PropertyImage[];
+    // New nullable columns
+    administracion: number | null;
+    video_url: string | null;
+    video_file: string | null;
 }
 
 export default function PropertyDetailsPage() {
@@ -94,13 +98,25 @@ export default function PropertyDetailsPage() {
                 }
 
                 if (isMounted) {
-                    setProperty(data as Property);
+                    // Safe-cast: coalesce nullable arrays and new columns
+                    const safeProperty: Property = {
+                        ...data,
+                        titulo: data.titulo ?? 'Sin título',
+                        precio: data.precio ?? 0,
+                        servicios: Array.isArray(data.servicios) ? data.servicios : [],
+                        amenities: Array.isArray(data.amenities) ? data.amenities : [],
+                        inmueble_imagenes: Array.isArray(data.inmueble_imagenes) ? data.inmueble_imagenes : [],
+                        administracion: data.administracion ?? null,
+                        video_url: data.video_url ?? null,
+                        video_file: data.video_file ?? null,
+                    };
+                    setProperty(safeProperty);
                     // Set first image as selected
-                    if (data.inmueble_imagenes?.length > 0) {
-                        const fachada = data.inmueble_imagenes.find(
+                    if (safeProperty.inmueble_imagenes.length > 0) {
+                        const fachada = safeProperty.inmueble_imagenes.find(
                             (img: PropertyImage) => img.category === 'fachada'
                         );
-                        setSelectedImage(fachada?.url || data.inmueble_imagenes[0].url);
+                        setSelectedImage(fachada?.url || safeProperty.inmueble_imagenes[0].url);
                     }
                 }
             } catch (err) {
@@ -139,13 +155,13 @@ export default function PropertyDetailsPage() {
         }
     };
 
-    const formatPrice = (val: number | null) => {
-        if (!val) return '0';
+    const formatPrice = (val: number | null | undefined) => {
+        if (val == null) return '0';
         return new Intl.NumberFormat('es-CO').format(val);
     };
 
     const getPrice = () => {
-        return property?.precio || 0;
+        return property?.precio ?? 0;
     };
 
     const avatarUrl = user?.user_metadata?.avatar_url || user?.user_metadata?.picture || profile?.avatar_url;
@@ -352,6 +368,14 @@ export default function PropertyDetailsPage() {
                                             <p className="text-3xl font-bold text-[#1A56DB]">
                                                 ${formatPrice(getPrice())}
                                             </p>
+                                            {property.administracion != null && property.administracion > 0 && (
+                                                <div className="flex items-center justify-end gap-1.5 mt-2">
+                                                    <DollarSign className="w-3.5 h-3.5 text-gray-400" />
+                                                    <span className="text-sm text-gray-500">
+                                                        Admón: ${formatPrice(property.administracion)}
+                                                    </span>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
 
@@ -450,6 +474,46 @@ export default function PropertyDetailsPage() {
                                         <p className="text-gray-600 leading-relaxed whitespace-pre-wrap">
                                             {property.descripcion}
                                         </p>
+                                    </div>
+                                )}
+
+                                {/* Video Section — only rendered when data exists */}
+                                {(property.video_url || property.video_file) && (
+                                    <div className="bg-white/60 rounded-3xl border border-white/50 shadow-sm backdrop-blur-md p-6">
+                                        <div className="flex items-center gap-2 mb-4">
+                                            <Video className="w-5 h-5 text-[#1A56DB]" />
+                                            <h3 className="text-lg font-bold text-[#111827]">Video</h3>
+                                        </div>
+                                        {property.video_url && (() => {
+                                            // Try to build an embed URL for YouTube/Vimeo
+                                            const url = property.video_url!;
+                                            let embedSrc: string | null = null;
+                                            const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/);
+                                            if (ytMatch) embedSrc = `https://www.youtube.com/embed/${ytMatch[1]}`;
+                                            const vimeoMatch = url.match(/vimeo\.com\/(\d+)/);
+                                            if (vimeoMatch) embedSrc = `https://player.vimeo.com/video/${vimeoMatch[1]}`;
+
+                                            return embedSrc ? (
+                                                <div className="aspect-video rounded-2xl overflow-hidden bg-black">
+                                                    <iframe
+                                                        src={embedSrc}
+                                                        className="w-full h-full"
+                                                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                                        allowFullScreen
+                                                        title="Video del inmueble"
+                                                    />
+                                                </div>
+                                            ) : (
+                                                <a href={url} target="_blank" rel="noopener noreferrer" className="text-[#1A56DB] hover:underline text-sm break-all">
+                                                    {url}
+                                                </a>
+                                            );
+                                        })()}
+                                        {!property.video_url && property.video_file && (
+                                            <p className="text-sm text-gray-500">
+                                                Video subido: <span className="font-medium text-gray-700">{property.video_file.split('/').pop()}</span>
+                                            </p>
+                                        )}
                                     </div>
                                 )}
                             </div>
