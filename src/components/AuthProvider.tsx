@@ -35,6 +35,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     useEffect(() => {
         let mounted = true;
 
+        // ═══════════════════════════════════════════════════════════════
+        // SAFETY TIMEOUT: Guarantee loading resolves within 5s
+        // On Vercel cold starts, getSession() can hang indefinitely.
+        // This ensures downstream pages always escape the spinner.
+        // ═══════════════════════════════════════════════════════════════
+        const authTimeout = setTimeout(() => {
+            if (mounted && loading) {
+                console.warn('[AuthProvider] ⚠️ Auth resolution timeout (5s) — forcing loading=false');
+                setLoading(false);
+            }
+        }, 5000);
+
         // 1. SETUP LISTENER (Reacts to live changes)
         const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
             if (mounted) {
@@ -49,6 +61,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 }
                 // ALWAYS UNLOCK LOADING ON EVENT
                 setLoading(false);
+                clearTimeout(authTimeout);
             }
         });
 
@@ -63,11 +76,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 }
                 // ALWAYS UNLOCK LOADING ON CHECK
                 setLoading(false);
+                clearTimeout(authTimeout);
+            }
+        }).catch((err) => {
+            console.error('[AuthProvider] getSession failed:', err);
+            if (mounted) {
+                setLoading(false);
+                clearTimeout(authTimeout);
             }
         });
 
         return () => {
             mounted = false;
+            clearTimeout(authTimeout);
             subscription.unsubscribe();
         };
     }, []);

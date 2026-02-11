@@ -166,17 +166,17 @@ export default function Paso2Page() {
                         direccion: propData.direccion ?? null
                     });
                     // Load admin fee (null-safe)
-                    const rawAdminFee = propData.administracion;
+                    const rawAdminFee = (propData as any).administracion;
                     if (rawAdminFee != null && rawAdminFee > 0) {
                         const af = rawAdminFee.toString();
                         setAdminFee(af);
                         setAdminFeeDisplay(formatCurrency(af));
                     }
                     // Load video fields (null-safe)
-                    setVideoUrl(propData.video_url ?? '');
-                    setVideoFile(propData.video_file ?? '');
-                    if (propData.video_file) {
-                        const parts = (propData.video_file as string).split('/');
+                    setVideoUrl((propData as any).video_url ?? '');
+                    setVideoFile((propData as any).video_file ?? '');
+                    if ((propData as any).video_file) {
+                        const parts = ((propData as any).video_file as string).split('/');
                         setVideoFileName(parts[parts.length - 1] || 'video');
                     }
                 }

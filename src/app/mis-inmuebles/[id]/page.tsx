@@ -119,9 +119,9 @@ export default function PropertyDetailsPage() {
                     servicios: Array.isArray(data.servicios) ? data.servicios : [],
                     amenities: Array.isArray(data.amenities) ? data.amenities : [],
                     inmueble_imagenes: Array.isArray(data.inmueble_imagenes) ? data.inmueble_imagenes : [],
-                    administracion: data.administracion ?? null,
-                    video_url: data.video_url ?? null,
-                    video_file: data.video_file ?? null,
+                    administracion: (data as any).administracion ?? null,
+                    video_url: (data as any).video_url ?? null,
+                    video_file: (data as any).video_file ?? null,
                 };
                 setProperty(safeProperty);
 
