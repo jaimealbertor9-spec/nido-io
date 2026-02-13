@@ -34,7 +34,8 @@ export async function updatePropertyLocation(
     subdivision: string | null = null,
     latitud: number | null = null,
     longitud: number | null = null,
-    ciudad: string = 'Líbano'
+    ciudad: string = 'Líbano',
+    direccionFormateada: string | null = null
 ): Promise<UpdateLocationResult> {
     // ═══════════════════════════════════════════════════════════════
     // STEP A: Auth Check (Session-Based)
@@ -92,6 +93,7 @@ export async function updatePropertyLocation(
                 latitud: latitud,
                 longitud: longitud,
                 ciudad: ciudad.trim() || 'Líbano',
+                direccion_formateada: direccionFormateada?.trim() || null,
                 updated_at: new Date().toISOString(),
             })
             .eq('id', propertyId);

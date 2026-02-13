@@ -115,6 +115,7 @@ export default function Paso1Page() {
     const [ciudad, setCiudad] = useState<string>('El Líbano');
     const [isGeocodingLoading, setIsGeocodingLoading] = useState(false);
     const [pinPlaced, setPinPlaced] = useState(false);
+    const [direccionFormateada, setDireccionFormateada] = useState<string>('');
 
     // Map state
     const [markerPosition, setMarkerPosition] = useState(CITY_CENTERS['El Líbano']);
@@ -126,6 +127,9 @@ export default function Paso1Page() {
 
     // Debounce timer ref for dragend
     const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+    // Google Map instance ref — needed for imperative panTo/setZoom
+    const mapInstanceRef = useRef<google.maps.Map | null>(null);
 
     // Characteristics state
     const [habitaciones, setHabitaciones] = useState(0);
@@ -177,6 +181,16 @@ export default function Paso1Page() {
     // LOAD EXISTING DATA (State Re-hydration) with Recovery Pattern
     // ═══════════════════════════════════════════════════════════════
     useEffect(() => {
+        let isCancelled = false;
+
+        // Safety net: force-release loading after 8s if Supabase stalls
+        const safetyTimeout = setTimeout(() => {
+            if (!isCancelled) {
+                console.warn('[Paso1] Safety timeout: releasing loading spinner after 8s');
+                setIsLoading(false);
+            }
+        }, 8000);
+
         const loadData = async () => {
             if (!propertyId) {
                 console.log('[Paso1] No propertyId, skipping data load');
@@ -190,11 +204,15 @@ export default function Paso1Page() {
             setFatalError(null);
 
             try {
+                // NOTE: 'subdivision' column was added via SQL migration and may not exist
+                // in the auto-generated database.types.ts. Using type assertion to suppress IDE errors.
                 const { data, error: fetchError } = await supabase
                     .from('inmuebles')
-                    .select('direccion, barrio, subdivision, latitud, longitud, ciudad, habitaciones, banos, area_m2, estrato, servicios, amenities, propietario_id')
+                    .select('direccion, barrio, latitud, longitud, ciudad, habitaciones, banos, area_m2, estrato, servicios, amenities, propietario_id, subdivision, direccion_formateada' as '*')
                     .eq('id', propertyId)
-                    .single();
+                    .single() as { data: any; error: any };
+
+                if (isCancelled) return;
 
                 if (fetchError) {
                     console.error('[Paso1] Supabase fetch error:', fetchError);
@@ -250,19 +268,31 @@ export default function Paso1Page() {
                 setServicios(Array.isArray(data.servicios) ? data.servicios : []);
                 setAmenidades(Array.isArray(data.amenities) ? data.amenities : []);
 
+                // Pre-fill Google formatted address for search bar
+                if (data.direccion_formateada) {
+                    setDireccionFormateada(data.direccion_formateada);
+                }
+
             } catch (err: any) {
                 console.error('[Paso1] Unexpected error loading data:', err);
-                setFatalError({
-                    message: `Error inesperado: ${err.message || 'No se pudo cargar el borrador'}`,
-                    canDelete: true
-                });
+                if (!isCancelled) {
+                    setFatalError({
+                        message: `Error inesperado: ${err.message || 'No se pudo cargar el borrador'}`,
+                        canDelete: true
+                    });
+                }
             } finally {
                 console.log('[Paso1] Data load complete, stopping spinner');
-                setIsLoading(false);
+                if (!isCancelled) setIsLoading(false);
             }
         };
 
         loadData();
+
+        return () => {
+            isCancelled = true;
+            clearTimeout(safetyTimeout);
+        };
     }, [propertyId]);
 
     // ═══════════════════════════════════════════════════════════════
@@ -275,6 +305,15 @@ export default function Paso1Page() {
             setSubdivision('');
         }
     }, [ciudad]);
+
+    // ═══════════════════════════════════════════════════════════════
+    // Belt+suspenders: imperatively panTo whenever mapCenter changes
+    // ═══════════════════════════════════════════════════════════════
+    useEffect(() => {
+        if (mapInstanceRef.current && mapCenter) {
+            mapInstanceRef.current.panTo(mapCenter);
+        }
+    }, [mapCenter]);
 
     // ═══════════════════════════════════════════════════════════════
     // GOOGLE PLACES AUTOCOMPLETE SETUP
@@ -293,34 +332,75 @@ export default function Paso1Page() {
             if (place.geometry?.location) {
                 const newLat = place.geometry.location.lat();
                 const newLng = place.geometry.location.lng();
+                const newPos = { lat: newLat, lng: newLng };
 
-                setMarkerPosition({ lat: newLat, lng: newLng });
-                setMapCenter({ lat: newLat, lng: newLng });
+                // Update ALL location React state
+                setMarkerPosition(newPos);
+                setMapCenter(newPos);
                 setLatitud(newLat);
                 setLongitud(newLng);
                 setPinPlaced(true);
 
-                // Extract city from address components
+                // IMPERATIVE map control — move the viewport NOW
+                if (mapInstanceRef.current) {
+                    mapInstanceRef.current.panTo(newPos);
+                    mapInstanceRef.current.setZoom(17);
+                }
+
+                // Persist the Google-formatted address text AND force-update the input
+                if (place.formatted_address) {
+                    setDireccionFormateada(place.formatted_address);
+                    // Also populate manual address field if empty
+                    setAddress(prev => prev.trim() ? prev : place.formatted_address!);
+                    // Force-update the search input immediately (don't wait for useEffect)
+                    if (searchInputRef.current) {
+                        searchInputRef.current.value = place.formatted_address;
+                    }
+                }
+
+                // Extract city, neighborhood, and address from components
                 if (place.address_components) {
+                    let detectedNeighborhood = '';
+                    let detectedSublocality = '';
+
                     for (const component of place.address_components) {
-                        if (component.types.includes('locality')) {
+                        const types = component.types;
+
+                        // City detection
+                        if (types.includes('locality')) {
                             const detectedCity = component.long_name;
-                            // Match to our known cities or default
                             const matchedCity = ALL_CITIES.find(c =>
                                 detectedCity.toLowerCase().includes(c.toLowerCase()) ||
                                 c.toLowerCase().includes(detectedCity.toLowerCase())
                             );
-                            if (matchedCity) {
-                                setCiudad(matchedCity);
-                            } else {
-                                setCiudad(detectedCity);
-                            }
-                            break;
+                            setCiudad(matchedCity || detectedCity);
                         }
+
+                        // Neighborhood / barrio detection
+                        if (types.includes('sublocality_level_1') || types.includes('sublocality')) {
+                            detectedSublocality = component.long_name;
+                        }
+                        if (types.includes('neighborhood')) {
+                            detectedNeighborhood = component.long_name;
+                        }
+                    }
+
+                    // Auto-fill barrio if not already set
+                    const barrio = detectedNeighborhood || detectedSublocality;
+                    if (barrio) {
+                        setNeighborhood(prev => prev.trim() ? prev : barrio);
                     }
                 }
 
-                console.log('[Autocomplete] Place selected:', place.formatted_address, { lat: newLat, lng: newLng });
+                // 3s debounce for detailed reverse geocode (fills remaining fields)
+                if (debounceTimerRef.current) {
+                    clearTimeout(debounceTimerRef.current);
+                }
+                debounceTimerRef.current = setTimeout(() => {
+                    reverseGeocode(newLat, newLng);
+                }, 3000);
+
+                console.log('[Autocomplete] Place selected + map panned:', place.formatted_address, newPos);
             }
         });
 
@@ -328,7 +408,17 @@ export default function Paso1Page() {
     }, [isMapLoaded]);
 
     // ═══════════════════════════════════════════════════════════════
-    // REVERSE GEOCODING (for when user drags marker)
+    // Pre-fill search bar with saved Google address on load
+    // ═══════════════════════════════════════════════════════════════
+    useEffect(() => {
+        if (direccionFormateada && searchInputRef.current) {
+            searchInputRef.current.value = direccionFormateada;
+        }
+    }, [direccionFormateada]);
+
+    // ═══════════════════════════════════════════════════════════════
+    // REVERSE GEOCODING — Flow B: Map drag → Update ALL form fields
+    // Called after 3s debounce on marker drag, map click, and autocomplete
     // ═══════════════════════════════════════════════════════════════
     const reverseGeocode = useCallback(async (lat: number, lng: number) => {
         if (!window.google) return;
@@ -340,26 +430,73 @@ export default function Paso1Page() {
 
             if (response.results && response.results.length > 0) {
                 const result = response.results[0];
-                console.log('[Geocoder] Full result:', result);
+                console.log('[Geocoder] Full result:', result.formatted_address);
 
-                let detectedCity = 'El Líbano';
-                for (const component of result.address_components) {
-                    if (component.types.includes('locality')) {
-                        detectedCity = component.long_name;
-                        break;
-                    }
-                    if (component.types.includes('administrative_area_level_2')) {
-                        detectedCity = component.long_name;
+                // ── Update formatted address → search bar text ──
+                if (result.formatted_address) {
+                    setDireccionFormateada(result.formatted_address);
+                    if (searchInputRef.current) {
+                        searchInputRef.current.value = result.formatted_address;
                     }
                 }
 
-                // Match to known city or use raw
+                // ── Extract ALL components ──
+                let detectedCity = 'El Líbano';
+                let detectedNeighborhood = '';
+                let detectedSublocality = '';
+                let detectedRoute = '';
+                let detectedStreetNumber = '';
+
+                for (const component of result.address_components) {
+                    const types = component.types;
+
+                    if (types.includes('locality')) {
+                        detectedCity = component.long_name;
+                    }
+                    if (types.includes('administrative_area_level_2') && !detectedCity) {
+                        detectedCity = component.long_name;
+                    }
+                    if (types.includes('neighborhood')) {
+                        detectedNeighborhood = component.long_name;
+                    }
+                    if (types.includes('sublocality_level_1') || types.includes('sublocality')) {
+                        detectedSublocality = component.long_name;
+                    }
+                    if (types.includes('route')) {
+                        detectedRoute = component.long_name;
+                    }
+                    if (types.includes('street_number')) {
+                        detectedStreetNumber = component.long_name;
+                    }
+                }
+
+                // ── Set city ──
                 const matchedCity = ALL_CITIES.find(c =>
                     detectedCity.toLowerCase().includes(c.toLowerCase()) ||
                     c.toLowerCase().includes(detectedCity.toLowerCase())
                 );
                 setCiudad(matchedCity || detectedCity);
-                console.log('[Geocoder] Detected city:', matchedCity || detectedCity);
+
+                // ── Set neighborhood / barrio ──
+                const barrio = detectedNeighborhood || detectedSublocality;
+                if (barrio) {
+                    setNeighborhood(barrio);
+                }
+
+                // ── Set address from route + street number ──
+                const streetAddress = detectedStreetNumber
+                    ? `${detectedRoute} ${detectedStreetNumber}`
+                    : detectedRoute;
+                if (streetAddress.trim()) {
+                    setAddress(streetAddress.trim());
+                }
+
+                console.log('[Geocoder] Extracted:', {
+                    city: matchedCity || detectedCity,
+                    barrio,
+                    address: streetAddress.trim(),
+                    formatted: result.formatted_address,
+                });
             }
         } catch (err) {
             console.error('[Geocoder] Error:', err);
@@ -453,7 +590,8 @@ export default function Paso1Page() {
                 subdivision || null,
                 latitud,
                 longitud,
-                ciudad
+                ciudad,
+                direccionFormateada || null
             );
 
             if (!locationResult.success) {
@@ -488,29 +626,37 @@ export default function Paso1Page() {
 
     // ═══════════════════════════════════════════════════════════════
     // SAVE AND EXIT (Guardar y Volver)
+    // ALWAYS persists location if ANY location data exists
     // ═══════════════════════════════════════════════════════════════
     const handleSaveAndExit = async () => {
         setError(null);
         setIsSavingAndExit(true);
 
         try {
-            if (address.trim() && neighborhood) {
+            // ALWAYS save location if we have ANY data to persist
+            const hasLocationData = latitud !== null || longitud !== null || address.trim() || ciudad;
+            if (hasLocationData) {
+                console.log('[SaveAndExit] Saving location data:', { latitud, longitud, ciudad, subdivision, address: address.trim() });
                 const locationResult = await updatePropertyLocation(
                     propertyId,
-                    address.trim(),
-                    neighborhood,
+                    address.trim() || direccionFormateada || 'Sin dirección',
+                    neighborhood || 'Sin barrio',
                     subdivision || null,
                     latitud,
                     longitud,
-                    ciudad
+                    ciudad,
+                    direccionFormateada || null
                 );
 
                 if (!locationResult.success) {
-                    console.warn('Location save warning:', locationResult.error);
+                    console.warn('[SaveAndExit] Location save warning:', locationResult.error);
+                } else {
+                    console.log('[SaveAndExit] ✅ Location persisted successfully');
                 }
             }
 
-            if (habitaciones > 0 || banos > 0 || area > 0 || servicios.length > 0) {
+            // Save features if anything has been set
+            if (habitaciones > 0 || banos > 0 || area > 0 || servicios.length > 0 || amenidades.length > 0) {
                 const featuresResult = await savePropertyFeatures(
                     propertyId,
                     habitaciones,
@@ -523,14 +669,15 @@ export default function Paso1Page() {
                 );
 
                 if (!featuresResult.success) {
-                    console.warn('Features save warning:', featuresResult.error);
+                    console.warn('[SaveAndExit] Features save warning:', featuresResult.error);
                 }
             }
 
+            // Navigate only after both saves complete
             router.push('/mis-inmuebles');
 
         } catch (err: any) {
-            console.error('Save and exit error:', err);
+            console.error('[SaveAndExit] Error:', err);
             setError(err.message || 'Error al guardar. Intenta de nuevo.');
         } finally {
             setIsSavingAndExit(false);
@@ -783,6 +930,13 @@ export default function Paso1Page() {
                                 center={mapCenter}
                                 zoom={15}
                                 onClick={handleMapClick}
+                                onLoad={(map) => {
+                                    mapInstanceRef.current = map;
+                                    console.log('[Map] Instance loaded');
+                                }}
+                                onUnmount={() => {
+                                    mapInstanceRef.current = null;
+                                }}
                                 options={{
                                     streetViewControl: false,
                                     mapTypeControl: false,

@@ -66,28 +66,8 @@ export async function createPropertyDraft(type: string): Promise<string> {
         // ═══════════════════════════════════════════════════════════════
 
         // ═══════════════════════════════════════════════════════════════
-        // STEP 3: Strict Search - Find draft matching User + Type + Status
-        // ═══════════════════════════════════════════════════════════════
-        const { data: existingDraft, error: searchError } = await supabase
-            .from('inmuebles')
-            .select('id')
-            .eq('propietario_id', userId)
-            .eq('tipo_inmueble', type)
-            .eq('estado', 'borrador')
-            .maybeSingle();
-
-        if (searchError) {
-            console.error('❌ [Action] Search Error:', searchError);
-            // Don't throw, try to create new one instead
-        }
-
-        if (existingDraft) {
-            console.log(`✅ [Action] Found existing draft: ${existingDraft.id}`);
-            return existingDraft.id;
-        }
-
-        // ═══════════════════════════════════════════════════════════════
-        // STEP 4: Strict Creation - Provide ALL required fields
+        // STEP 3: Always create a NEW draft (no auto-resume)
+        // Users can resume existing drafts from /mis-inmuebles
         // ═══════════════════════════════════════════════════════════════
         console.log('🆕 [Action] Creating NEW draft...');
         const { data: newDraft, error: insertError } = await supabase
