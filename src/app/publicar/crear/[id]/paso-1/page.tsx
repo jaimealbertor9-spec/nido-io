@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { Inter } from 'next/font/google';
-import { Loader2, Minus, Plus, MapPin, Home, ChevronRight, Navigation, AlertTriangle, Trash2 } from 'lucide-react';
+import { Loader2, Minus, Plus, MapPin, Home, ChevronRight, Navigation, AlertTriangle, Trash2, Search } from 'lucide-react';
 import { GoogleMap, MarkerF, useJsApiLoader } from '@react-google-maps/api';
 import { updatePropertyLocation } from '@/app/actions/updateLocation';
 import { savePropertyFeatures } from '@/app/actions/saveFeatures';
@@ -16,9 +16,52 @@ const inter = Inter({
 });
 
 // ═══════════════════════════════════════════════════════════════
-// UBICACIONES - Categorized neighborhoods for Líbano, Tolima
+// CITY & SUBDIVISION DATA
 // ═══════════════════════════════════════════════════════════════
-const UBICACIONES = {
+
+/** City center coordinates for map centering */
+const CITY_CENTERS: Record<string, { lat: number; lng: number }> = {
+    'Bogotá': { lat: 4.6110, lng: -74.0817 },
+    'Medellín': { lat: 6.2442, lng: -75.5812 },
+    'Cali': { lat: 3.4516, lng: -76.5320 },
+    'Ibagué': { lat: 4.4389, lng: -75.2322 },
+    'Cúcuta': { lat: 7.8891, lng: -72.4967 },
+    'Manizales': { lat: 5.0689, lng: -75.5174 },
+    'Pereira': { lat: 4.8133, lng: -75.6961 },
+    'Armenia': { lat: 4.5339, lng: -75.6811 },
+    'Bucaramanga': { lat: 7.1254, lng: -73.1198 },
+    'Villavicencio': { lat: 4.1420, lng: -73.6266 },
+    'El Líbano': { lat: 4.9213, lng: -75.0665 },
+};
+
+const ALL_CITIES = Object.keys(CITY_CENTERS);
+
+/** Bogotá Localidades */
+const BOGOTA_LOCALIDADES = [
+    'Usaquén', 'Chapinero', 'Santa Fe', 'San Cristóbal', 'Usme',
+    'Tunjuelito', 'Bosa', 'Kennedy', 'Fontibón', 'Engativá',
+    'Suba', 'Barrios Unidos', 'Teusaquillo', 'Los Mártires', 'Antonio Nariño',
+    'Puente Aranda', 'La Candelaria', 'Rafael Uribe Uribe', 'Ciudad Bolívar', 'Sumapaz',
+];
+
+/** Cities that use "Comuna" system */
+const COMUNA_CITIES = ['Medellín', 'Cali', 'Ibagué', 'Cúcuta', 'Manizales', 'Pereira', 'Armenia', 'Bucaramanga', 'Villavicencio'];
+
+/** Comunas by city (number-based) */
+const COMUNAS: Record<string, string[]> = {
+    'Medellín': Array.from({ length: 16 }, (_, i) => `Comuna ${i + 1}`),
+    'Cali': Array.from({ length: 22 }, (_, i) => `Comuna ${i + 1}`),
+    'Ibagué': Array.from({ length: 13 }, (_, i) => `Comuna ${i + 1}`),
+    'Cúcuta': Array.from({ length: 10 }, (_, i) => `Comuna ${i + 1}`),
+    'Manizales': Array.from({ length: 12 }, (_, i) => `Comuna ${i + 1}`),
+    'Pereira': Array.from({ length: 19 }, (_, i) => `Comuna ${i + 1}`),
+    'Armenia': Array.from({ length: 10 }, (_, i) => `Comuna ${i + 1}`),
+    'Bucaramanga': Array.from({ length: 17 }, (_, i) => `Comuna ${i + 1}`),
+    'Villavicencio': Array.from({ length: 8 }, (_, i) => `Comuna ${i + 1}`),
+};
+
+/** El Líbano barrios (preserved from original) */
+const LIBANO_BARRIOS: Record<string, string[]> = {
     "Barrios Líbano": [
         "1 de Mayo", "20 de Julio", "Carlos Pizarro", "Cidral", "Coloyita",
         "El Carmen", "El Centro", "El Porvenir", "El Triunfo", "Estadio",
@@ -39,14 +82,13 @@ const AMENIDADES_LIST = [
     'Patio', 'Vigilancia', 'Ascensor', 'Zona BBQ', 'Salón Comunal', 'Depósito', 'Cocina Integral',
 ];
 
-// Líbano, Tolima coordinates
-const LIBANO_CENTER = { lat: 4.9213, lng: -75.0665 };
+// Google Maps Libraries
+const MAPS_LIBRARIES: ("places")[] = ['places'];
 
-// Google Maps container style
 const mapContainerStyle = {
     width: '100%',
-    height: '300px',
-    borderRadius: '8px',
+    height: '350px',
+    borderRadius: '12px',
 };
 
 export default function Paso1Page() {
@@ -60,21 +102,30 @@ export default function Paso1Page() {
     const [isSavingAndExit, setIsSavingAndExit] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
 
-    // Fatal error state - shows recovery UI instead of redirecting
+    // Fatal error state
     const [fatalError, setFatalError] = useState<{ message: string; canDelete: boolean } | null>(null);
     const [error, setError] = useState<string | null>(null);
 
     // Location state
     const [address, setAddress] = useState('');
     const [neighborhood, setNeighborhood] = useState('');
-    const [puntoReferencia, setPuntoReferencia] = useState('');
+    const [subdivision, setSubdivision] = useState('');
     const [latitud, setLatitud] = useState<number | null>(null);
     const [longitud, setLongitud] = useState<number | null>(null);
-    const [ciudad, setCiudad] = useState<string>('Líbano'); // Auto-detected from geocoding
+    const [ciudad, setCiudad] = useState<string>('El Líbano');
     const [isGeocodingLoading, setIsGeocodingLoading] = useState(false);
+    const [pinPlaced, setPinPlaced] = useState(false);
 
-    // Map marker position (for controlled component)
-    const [markerPosition, setMarkerPosition] = useState(LIBANO_CENTER);
+    // Map state
+    const [markerPosition, setMarkerPosition] = useState(CITY_CENTERS['El Líbano']);
+    const [mapCenter, setMapCenter] = useState(CITY_CENTERS['El Líbano']);
+
+    // Autocomplete ref
+    const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
+    const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+    // Debounce timer ref for dragend
+    const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
     // Characteristics state
     const [habitaciones, setHabitaciones] = useState(0);
@@ -87,19 +138,23 @@ export default function Paso1Page() {
     const [amenidades, setAmenidades] = useState<string[]>([]);
 
     // ═══════════════════════════════════════════════════════════════
-    // GOOGLE MAPS LOADER
+    // GOOGLE MAPS LOADER (with Places library)
     // ═══════════════════════════════════════════════════════════════
     const { isLoaded: isMapLoaded } = useJsApiLoader({
         id: 'google-map-script',
         googleMapsApiKey: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '',
+        libraries: MAPS_LIBRARIES,
     });
 
     // ═══════════════════════════════════════════════════════════════
-    // FORM VALIDATION
+    // FORM VALIDATION — Pin is MANDATORY
     // ═══════════════════════════════════════════════════════════════
     const isFormValid =
         address.trim().length > 0 &&
         neighborhood !== '' &&
+        latitud !== null &&
+        longitud !== null &&
+        pinPlaced &&
         habitaciones > 0 &&
         banos > 0 &&
         area > 0 &&
@@ -107,9 +162,16 @@ export default function Paso1Page() {
         servicios.length > 0;
 
     // ═══════════════════════════════════════════════════════════════
-    // LOAD EXISTING DATA (State Re-hydration)
+    // DYNAMIC UI LOGIC — Determine subdivision type
     // ═══════════════════════════════════════════════════════════════
+    const getSubdivisionType = useCallback((): 'localidad' | 'comuna' | 'barrio_list' | 'free_text' => {
+        if (ciudad === 'Bogotá') return 'localidad';
+        if (COMUNA_CITIES.includes(ciudad)) return 'comuna';
+        if (ciudad === 'El Líbano') return 'barrio_list';
+        return 'free_text';
+    }, [ciudad]);
 
+    const subdivisionType = getSubdivisionType();
 
     // ═══════════════════════════════════════════════════════════════
     // LOAD EXISTING DATA (State Re-hydration) with Recovery Pattern
@@ -130,25 +192,19 @@ export default function Paso1Page() {
             try {
                 const { data, error: fetchError } = await supabase
                     .from('inmuebles')
-                    .select('direccion, barrio, punto_referencia, latitud, longitud, habitaciones, banos, area_m2, estrato, servicios, amenities, propietario_id')
+                    .select('direccion, barrio, subdivision, latitud, longitud, ciudad, habitaciones, banos, area_m2, estrato, servicios, amenities, propietario_id')
                     .eq('id', propertyId)
                     .single();
 
                 if (fetchError) {
                     console.error('[Paso1] Supabase fetch error:', fetchError);
 
-                    // ═══════════════════════════════════════════════════════════════
-                    // RECOVERY PATTERN: Show recovery UI instead of redirecting
-                    // This prevents infinite loops when /publicar/tipo redirects back
-                    // ═══════════════════════════════════════════════════════════════
                     if (fetchError.code === 'PGRST116') {
-                        // Property not found - offer to start fresh
                         setFatalError({
                             message: 'Este borrador no existe o fue eliminado.',
                             canDelete: false
                         });
                     } else {
-                        // Other database error - offer to delete and start fresh
                         setFatalError({
                             message: 'Encontramos un problema al cargar tu borrador. Los datos pueden estar corruptos.',
                             canDelete: true
@@ -171,7 +227,8 @@ export default function Paso1Page() {
                 // Populate form state with fetched data (null-safe)
                 setAddress(data.direccion ?? '');
                 setNeighborhood(data.barrio ?? '');
-                setPuntoReferencia(data.punto_referencia ?? '');
+                setSubdivision(data.subdivision ?? '');
+                setCiudad(data.ciudad ?? 'El Líbano');
                 setLatitud(data.latitud ?? null);
                 setLongitud(data.longitud ?? null);
                 setHabitaciones(data.habitaciones ?? 0);
@@ -182,19 +239,19 @@ export default function Paso1Page() {
                 // Set marker position if coordinates exist
                 if (data.latitud && data.longitud) {
                     setMarkerPosition({ lat: data.latitud, lng: data.longitud });
+                    setMapCenter({ lat: data.latitud, lng: data.longitud });
+                    setPinPlaced(true);
+                } else if (data.ciudad && CITY_CENTERS[data.ciudad]) {
+                    setMapCenter(CITY_CENTERS[data.ciudad]);
+                    setMarkerPosition(CITY_CENTERS[data.ciudad]);
                 }
 
-                // Handle arrays with null coalescing and type safety
+                // Handle arrays
                 setServicios(Array.isArray(data.servicios) ? data.servicios : []);
                 setAmenidades(Array.isArray(data.amenities) ? data.amenities : []);
 
             } catch (err: any) {
                 console.error('[Paso1] Unexpected error loading data:', err);
-
-                // ═══════════════════════════════════════════════════════════════
-                // FATAL ERROR RECOVERY: Network errors, image loading issues, etc.
-                // DO NOT REDIRECT - Show recovery UI instead
-                // ═══════════════════════════════════════════════════════════════
                 setFatalError({
                     message: `Error inesperado: ${err.message || 'No se pudo cargar el borrador'}`,
                     canDelete: true
@@ -209,7 +266,69 @@ export default function Paso1Page() {
     }, [propertyId]);
 
     // ═══════════════════════════════════════════════════════════════
-    // REVERSE GEOCODING: Extract city from coordinates
+    // Update map center when city changes
+    // ═══════════════════════════════════════════════════════════════
+    useEffect(() => {
+        if (CITY_CENTERS[ciudad]) {
+            setMapCenter(CITY_CENTERS[ciudad]);
+            // Reset subdivision when city changes
+            setSubdivision('');
+        }
+    }, [ciudad]);
+
+    // ═══════════════════════════════════════════════════════════════
+    // GOOGLE PLACES AUTOCOMPLETE SETUP
+    // ═══════════════════════════════════════════════════════════════
+    useEffect(() => {
+        if (!isMapLoaded || !searchInputRef.current || autocompleteRef.current) return;
+
+        const autocomplete = new google.maps.places.Autocomplete(searchInputRef.current, {
+            componentRestrictions: { country: 'co' },
+            fields: ['geometry', 'formatted_address', 'name', 'address_components'],
+            types: ['address'],
+        });
+
+        autocomplete.addListener('place_changed', () => {
+            const place = autocomplete.getPlace();
+            if (place.geometry?.location) {
+                const newLat = place.geometry.location.lat();
+                const newLng = place.geometry.location.lng();
+
+                setMarkerPosition({ lat: newLat, lng: newLng });
+                setMapCenter({ lat: newLat, lng: newLng });
+                setLatitud(newLat);
+                setLongitud(newLng);
+                setPinPlaced(true);
+
+                // Extract city from address components
+                if (place.address_components) {
+                    for (const component of place.address_components) {
+                        if (component.types.includes('locality')) {
+                            const detectedCity = component.long_name;
+                            // Match to our known cities or default
+                            const matchedCity = ALL_CITIES.find(c =>
+                                detectedCity.toLowerCase().includes(c.toLowerCase()) ||
+                                c.toLowerCase().includes(detectedCity.toLowerCase())
+                            );
+                            if (matchedCity) {
+                                setCiudad(matchedCity);
+                            } else {
+                                setCiudad(detectedCity);
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                console.log('[Autocomplete] Place selected:', place.formatted_address, { lat: newLat, lng: newLng });
+            }
+        });
+
+        autocompleteRef.current = autocomplete;
+    }, [isMapLoaded]);
+
+    // ═══════════════════════════════════════════════════════════════
+    // REVERSE GEOCODING (for when user drags marker)
     // ═══════════════════════════════════════════════════════════════
     const reverseGeocode = useCallback(async (lat: number, lng: number) => {
         if (!window.google) return;
@@ -223,33 +342,34 @@ export default function Paso1Page() {
                 const result = response.results[0];
                 console.log('[Geocoder] Full result:', result);
 
-                // Extract city from address components
-                let detectedCity = 'Líbano'; // Default fallback
+                let detectedCity = 'El Líbano';
                 for (const component of result.address_components) {
-                    // Try locality first (city name)
                     if (component.types.includes('locality')) {
                         detectedCity = component.long_name;
                         break;
                     }
-                    // Fallback to administrative_area_level_2 (municipality)
                     if (component.types.includes('administrative_area_level_2')) {
                         detectedCity = component.long_name;
                     }
                 }
 
-                setCiudad(detectedCity);
-                console.log('[Geocoder] Detected city:', detectedCity);
+                // Match to known city or use raw
+                const matchedCity = ALL_CITIES.find(c =>
+                    detectedCity.toLowerCase().includes(c.toLowerCase()) ||
+                    c.toLowerCase().includes(detectedCity.toLowerCase())
+                );
+                setCiudad(matchedCity || detectedCity);
+                console.log('[Geocoder] Detected city:', matchedCity || detectedCity);
             }
         } catch (err) {
             console.error('[Geocoder] Error:', err);
-            // Keep default city on error
         } finally {
             setIsGeocodingLoading(false);
         }
     }, []);
 
     // ═══════════════════════════════════════════════════════════════
-    // MAP HANDLERS
+    // MAP HANDLERS — 3s debounce on dragend
     // ═══════════════════════════════════════════════════════════════
     const handleMarkerDragEnd = useCallback((e: google.maps.MapMouseEvent) => {
         if (e.latLng) {
@@ -258,10 +378,16 @@ export default function Paso1Page() {
             setMarkerPosition({ lat: newLat, lng: newLng });
             setLatitud(newLat);
             setLongitud(newLng);
-            console.log('[Map] Marker moved to:', { lat: newLat, lng: newLng });
+            setPinPlaced(true);
+            console.log('[Map] Marker dragged to:', { lat: newLat, lng: newLng });
 
-            // Trigger reverse geocoding to detect city
-            reverseGeocode(newLat, newLng);
+            // 3s debounce before reverse geocoding
+            if (debounceTimerRef.current) {
+                clearTimeout(debounceTimerRef.current);
+            }
+            debounceTimerRef.current = setTimeout(() => {
+                reverseGeocode(newLat, newLng);
+            }, 3000);
         }
     }, [reverseGeocode]);
 
@@ -272,12 +398,27 @@ export default function Paso1Page() {
             setMarkerPosition({ lat: newLat, lng: newLng });
             setLatitud(newLat);
             setLongitud(newLng);
+            setPinPlaced(true);
             console.log('[Map] Clicked at:', { lat: newLat, lng: newLng });
 
-            // Trigger reverse geocoding to detect city
-            reverseGeocode(newLat, newLng);
+            // 3s debounce before reverse geocoding
+            if (debounceTimerRef.current) {
+                clearTimeout(debounceTimerRef.current);
+            }
+            debounceTimerRef.current = setTimeout(() => {
+                reverseGeocode(newLat, newLng);
+            }, 3000);
         }
     }, [reverseGeocode]);
+
+    // Cleanup debounce timer
+    useEffect(() => {
+        return () => {
+            if (debounceTimerRef.current) {
+                clearTimeout(debounceTimerRef.current);
+            }
+        };
+    }, []);
 
     // ═══════════════════════════════════════════════════════════════
     // TOGGLE FUNCTIONS
@@ -304,12 +445,12 @@ export default function Paso1Page() {
         setIsSaving(true);
 
         try {
-            // Save location with new fields including ciudad from geocoding
+            // Save location with new subdivision field
             const locationResult = await updatePropertyLocation(
                 propertyId,
                 address.trim(),
                 neighborhood,
-                puntoReferencia,
+                subdivision || null,
                 latitud,
                 longitud,
                 ciudad
@@ -353,13 +494,12 @@ export default function Paso1Page() {
         setIsSavingAndExit(true);
 
         try {
-            // Save location (only if we have required fields)
             if (address.trim() && neighborhood) {
                 const locationResult = await updatePropertyLocation(
                     propertyId,
                     address.trim(),
                     neighborhood,
-                    puntoReferencia,
+                    subdivision || null,
                     latitud,
                     longitud,
                     ciudad
@@ -370,7 +510,6 @@ export default function Paso1Page() {
                 }
             }
 
-            // Save features (only if we have some data)
             if (habitaciones > 0 || banos > 0 || area > 0 || servicios.length > 0) {
                 const featuresResult = await savePropertyFeatures(
                     propertyId,
@@ -388,7 +527,6 @@ export default function Paso1Page() {
                 }
             }
 
-            // Redirect to dashboard
             router.push('/mis-inmuebles');
 
         } catch (err: any) {
@@ -400,7 +538,7 @@ export default function Paso1Page() {
     };
 
     // ═══════════════════════════════════════════════════════════════
-    // DELETE DRAFT HANDLER (for recovery from corrupted drafts)
+    // DELETE DRAFT HANDLER
     // ═══════════════════════════════════════════════════════════════
     const handleDeleteDraft = async () => {
         if (!propertyId) {
@@ -437,19 +575,16 @@ export default function Paso1Page() {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // RECOVERY UI: Show when draft fails to load
-    // This prevents infinite redirect loops
+    // RECOVERY UI
     // ═══════════════════════════════════════════════════════════════
     if (fatalError) {
         return (
             <div className={`${inter.className} flex flex-col items-center justify-center min-h-[400px] p-8`}>
                 <div className="max-w-md w-full bg-white border border-red-200 rounded-lg shadow-lg p-8 text-center">
-                    {/* Error Icon */}
                     <div className="w-16 h-16 mx-auto mb-6 bg-red-100 rounded-full flex items-center justify-center">
                         <AlertTriangle className="w-8 h-8 text-red-600" />
                     </div>
 
-                    {/* Error Message */}
                     <h2 className="text-xl font-semibold text-slate-800 mb-2">
                         Problema al cargar el borrador
                     </h2>
@@ -457,7 +592,6 @@ export default function Paso1Page() {
                         {fatalError.message}
                     </p>
 
-                    {/* Action Buttons */}
                     <div className="space-y-3">
                         {fatalError.canDelete && (
                             <button
@@ -487,7 +621,6 @@ export default function Paso1Page() {
                         </button>
                     </div>
 
-                    {/* Error display */}
                     {error && (
                         <p className="mt-4 text-sm text-red-600">{error}</p>
                     )}
@@ -495,6 +628,101 @@ export default function Paso1Page() {
             </div>
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // SUBDIVISION RENDERER — Dynamic based on city
+    // ═══════════════════════════════════════════════════════════════
+    const renderSubdivisionField = () => {
+        if (subdivisionType === 'localidad') {
+            return (
+                <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                        Localidad <span className="text-red-500 ml-1">*</span>
+                    </label>
+                    <select
+                        value={subdivision}
+                        onChange={(e) => setSubdivision(e.target.value)}
+                        className="w-full h-11 px-3 bg-white border border-gray-300 rounded-md text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#0c263b] focus:border-transparent"
+                    >
+                        <option value="">Seleccionar localidad</option>
+                        {BOGOTA_LOCALIDADES.map(loc => (
+                            <option key={loc} value={loc}>{loc}</option>
+                        ))}
+                    </select>
+                </div>
+            );
+        }
+
+        if (subdivisionType === 'comuna') {
+            const comunaList = COMUNAS[ciudad] || [];
+            return (
+                <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                        Comuna <span className="text-red-500 ml-1">*</span>
+                    </label>
+                    <select
+                        value={subdivision}
+                        onChange={(e) => setSubdivision(e.target.value)}
+                        className="w-full h-11 px-3 bg-white border border-gray-300 rounded-md text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#0c263b] focus:border-transparent"
+                    >
+                        <option value="">Seleccionar comuna</option>
+                        {comunaList.map(c => (
+                            <option key={c} value={c}>{c}</option>
+                        ))}
+                    </select>
+                </div>
+            );
+        }
+
+        // barrio_list and free_text don't need subdivision — barrio field handles it
+        return null;
+    };
+
+    // ═══════════════════════════════════════════════════════════════
+    // BARRIO RENDERER — Dynamic based on city
+    // ═══════════════════════════════════════════════════════════════
+    const renderBarrioField = () => {
+        if (subdivisionType === 'barrio_list') {
+            // El Líbano — dropdown with predefined barrios
+            return (
+                <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                        Barrio <span className="text-red-500 ml-1">*</span>
+                    </label>
+                    <select
+                        value={neighborhood}
+                        onChange={(e) => setNeighborhood(e.target.value)}
+                        className="w-full h-11 px-3 bg-white border border-gray-300 rounded-md text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#0c263b] focus:border-transparent"
+                    >
+                        <option value="">Seleccionar barrio</option>
+                        {Object.entries(LIBANO_BARRIOS).map(([category, barrios]) => (
+                            <optgroup key={category} label={category}>
+                                {barrios.map(barrio => (
+                                    <option key={barrio} value={barrio}>{barrio}</option>
+                                ))}
+                            </optgroup>
+                        ))}
+                    </select>
+                </div>
+            );
+        }
+
+        // All other cities — free text barrio
+        return (
+            <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                    Barrio <span className="text-red-500 ml-1">*</span>
+                </label>
+                <input
+                    type="text"
+                    value={neighborhood}
+                    onChange={(e) => setNeighborhood(e.target.value)}
+                    placeholder="Ej: El Chicó, La Soledad, Pinares..."
+                    className="w-full h-11 px-3 bg-white border border-gray-300 rounded-md text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#0c263b] focus:border-transparent"
+                />
+            </div>
+        );
+    };
 
     return (
         <div className={`${inter.className} space-y-8`} style={{ fontFamily: 'Lufga, sans-serif' }}>
@@ -521,75 +749,38 @@ export default function Paso1Page() {
                     <h2 className="text-lg font-semibold text-[#0c263b]">Ubicación</h2>
                 </div>
 
-                <div className="grid md:grid-cols-2 gap-5">
-                    {/* Address */}
-                    <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                            Dirección <span className="text-red-500 ml-1">*</span>
-                        </label>
-                        <input
-                            type="text"
-                            value={address}
-                            onChange={(e) => setAddress(e.target.value)}
-                            placeholder="Ej: Calle 10 #5-42"
-                            className="w-full h-11 px-3 bg-white border border-gray-300 rounded-md text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#0c263b] focus:border-transparent"
-                        />
-                    </div>
-
-                    {/* Neighborhood - Categorized Select */}
-                    <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                            Barrio <span className="text-red-500 ml-1">*</span>
-                        </label>
-                        <select
-                            value={neighborhood}
-                            onChange={(e) => setNeighborhood(e.target.value)}
-                            className="w-full h-11 px-3 bg-white border border-gray-300 rounded-md text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#0c263b] focus:border-transparent"
-                        >
-                            <option value="">Seleccionar barrio</option>
-                            {Object.entries(UBICACIONES).map(([category, barrios]) => (
-                                <optgroup key={category} label={category}>
-                                    {barrios.map(barrio => (
-                                        <option key={barrio} value={barrio}>{barrio}</option>
-                                    ))}
-                                </optgroup>
-                            ))}
-                        </select>
-                    </div>
-                </div>
-
-                {/* Punto de Referencia */}
-                <div className="mt-5">
+                {/* Google Places Search Bar */}
+                <div className="mb-5">
                     <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                        Punto de Referencia <span className="text-slate-400 text-xs">(Para la IA)</span>
+                        <Search className="inline w-4 h-4 mr-1" />
+                        Buscar dirección en Google
                     </label>
                     <input
+                        ref={searchInputRef}
                         type="text"
-                        value={puntoReferencia}
-                        onChange={(e) => setPuntoReferencia(e.target.value)}
-                        placeholder="Ej: Cerca al Hospital, A dos cuadras del Parque..."
-                        className="w-full h-11 px-3 bg-white border border-gray-300 rounded-md text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#0c263b] focus:border-transparent"
+                        placeholder="Busca una dirección en Colombia..."
+                        className="w-full h-11 px-3 bg-slate-50 border border-gray-300 rounded-md text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                     <p className="mt-1 text-xs text-slate-400">
-                        Describe un punto conocido cercano para ayudar a ubicar mejor el inmueble.
+                        Escribe una dirección y selecciona de las sugerencias para ubicar el pin automáticamente.
                     </p>
                 </div>
 
-                {/* Google Maps */}
-                <div className="mt-5">
+                {/* MANDATORY MAP */}
+                <div className="mb-5">
                     <label className="block text-sm font-medium text-slate-700 mb-2">
                         <Navigation className="inline w-4 h-4 mr-1" />
-                        Ubicación en el Mapa
+                        Ubicación en el Mapa <span className="text-red-500 ml-1">*</span>
                     </label>
                     <p className="text-xs text-slate-400 mb-3">
-                        Haz clic o arrastra el marcador para indicar la ubicación exacta del inmueble.
+                        Haz clic o arrastra el marcador para indicar la ubicación exacta del inmueble. <strong>Es obligatorio.</strong>
                     </p>
 
                     {isMapLoaded ? (
-                        <div className="border border-gray-200 rounded-lg overflow-hidden">
+                        <div className="border-2 border-gray-200 rounded-xl overflow-hidden shadow-sm">
                             <GoogleMap
                                 mapContainerStyle={mapContainerStyle}
-                                center={markerPosition}
+                                center={mapCenter}
                                 zoom={15}
                                 onClick={handleMapClick}
                                 options={{
@@ -606,7 +797,7 @@ export default function Paso1Page() {
                             </GoogleMap>
                         </div>
                     ) : (
-                        <div className="h-[300px] bg-slate-100 rounded-lg flex items-center justify-center">
+                        <div className="h-[350px] bg-slate-100 rounded-xl flex items-center justify-center">
                             <Loader2 className="w-6 h-6 text-slate-400 animate-spin" />
                         </div>
                     )}
@@ -620,27 +811,89 @@ export default function Paso1Page() {
                             </div>
                         ) : (
                             <div className="space-y-1">
-                                {(latitud && longitud) ? (
+                                {pinPlaced && latitud && longitud ? (
                                     <div className="flex items-center gap-2 text-sm text-green-700">
                                         <MapPin className="w-4 h-4" />
                                         <span>
-                                            Ubicación marcada en: <strong>{ciudad}, Tolima</strong>
+                                            Ubicación marcada en: <strong>{ciudad}</strong>
                                         </span>
                                     </div>
                                 ) : (
-                                    <div className="flex items-center gap-2 text-sm text-slate-500">
-                                        <MapPin className="w-4 h-4" />
-                                        <span>Haz clic en el mapa para marcar la ubicación</span>
-                                    </div>
-                                )}
-                                {address && (
-                                    <div className="flex items-center gap-2 text-sm text-slate-600">
-                                        <Home className="w-4 h-4" />
-                                        <span>Dirección: {address}</span>
+                                    <div className="flex items-center gap-2 text-sm text-amber-600">
+                                        <AlertTriangle className="w-4 h-4" />
+                                        <span className="font-medium">Debes colocar el pin en el mapa para continuar</span>
                                     </div>
                                 )}
                             </div>
                         )}
+                    </div>
+                </div>
+
+                {/* City + Subdivision + Barrio + Address Grid */}
+                <div className="grid md:grid-cols-2 gap-5">
+                    {/* City */}
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                            Ciudad <span className="text-red-500 ml-1">*</span>
+                        </label>
+                        <select
+                            value={ALL_CITIES.includes(ciudad) ? ciudad : '__other__'}
+                            onChange={(e) => {
+                                const val = e.target.value;
+                                if (val === '__other__') {
+                                    setCiudad('');
+                                } else {
+                                    setCiudad(val);
+                                }
+                                setSubdivision('');
+                                setNeighborhood('');
+                            }}
+                            className="w-full h-11 px-3 bg-white border border-gray-300 rounded-md text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#0c263b] focus:border-transparent"
+                        >
+                            {ALL_CITIES.map(c => (
+                                <option key={c} value={c}>{c}</option>
+                            ))}
+                            <option value="__other__">Otra ciudad</option>
+                        </select>
+                    </div>
+
+                    {/* Custom city name (if "Otra") */}
+                    {!ALL_CITIES.includes(ciudad) && (
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                                Nombre de la Ciudad <span className="text-red-500 ml-1">*</span>
+                            </label>
+                            <input
+                                type="text"
+                                value={ciudad}
+                                onChange={(e) => setCiudad(e.target.value)}
+                                placeholder="Ej: Tunja, Neiva, Popayán..."
+                                className="w-full h-11 px-3 bg-white border border-gray-300 rounded-md text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#0c263b] focus:border-transparent"
+                            />
+                        </div>
+                    )}
+
+                    {/* Dynamic Subdivision (Localidad / Comuna) */}
+                    {renderSubdivisionField()}
+
+                    {/* Barrio */}
+                    {renderBarrioField()}
+
+                    {/* Manual Address — Free Text */}
+                    <div className="md:col-span-2">
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                            Dirección Manual <span className="text-red-500 ml-1">*</span>
+                        </label>
+                        <input
+                            type="text"
+                            value={address}
+                            onChange={(e) => setAddress(e.target.value)}
+                            placeholder="Ej: Manzana A Casa 5, Calle 10 #5-42, Etapa 3 Torre 2 Apto 501..."
+                            className="w-full h-11 px-3 bg-white border border-gray-300 rounded-md text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#0c263b] focus:border-transparent"
+                        />
+                        <p className="mt-1 text-xs text-slate-400">
+                            Escribe la dirección tal como la conoces. No te preocupes por el formato exacto.
+                        </p>
                     </div>
                 </div>
             </section>

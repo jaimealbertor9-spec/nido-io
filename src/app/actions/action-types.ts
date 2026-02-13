@@ -33,6 +33,23 @@ export interface SaveFeaturesResult {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// POI ENRICHMENT
+// ═══════════════════════════════════════════════════════════════
+export interface POIEntry {
+    nombre: string;
+    tipo: string;
+    distancia_m: number;
+    lat: number;
+    lng: number;
+}
+
+export interface EnrichPOIsResult {
+    success: boolean;
+    count?: number;
+    error?: string;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // DESCRIPTION
 // ═══════════════════════════════════════════════════════════════
 export interface UpdateDescriptionResult {

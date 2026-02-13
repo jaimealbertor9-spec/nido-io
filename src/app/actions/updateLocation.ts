@@ -4,6 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 import { createServerSupabaseClient } from '@/lib/supabase-server';
 import { revalidatePath } from 'next/cache';
 import type { UpdateLocationResult } from './action-types';
+import { enrichPropertyPOIs } from './enrichPOIs';
 
 // Initialize Supabase with service role for server-side operations
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -18,19 +19,19 @@ export type { UpdateLocationResult } from './action-types';
  * SECURITY: Session-based auth + ownership check prevents IDOR attacks
  * 
  * @param propertyId - The property ID to update
- * @param address - The exact address
+ * @param address - The exact address (free text)
  * @param neighborhood - The neighborhood (barrio)
- * @param puntoReferencia - Reference point for AI semantic search (e.g., "Cerca al Hospital")
+ * @param subdivision - Localidad, Comuna, or null
  * @param latitud - GPS latitude from map pin
  * @param longitud - GPS longitude from map pin
- * @param ciudad - City detected from reverse geocoding (defaults to 'Líbano')
+ * @param ciudad - City detected from reverse geocoding
  * @returns Success status and optional error message
  */
 export async function updatePropertyLocation(
     propertyId: string,
     address: string,
     neighborhood: string,
-    puntoReferencia: string = '',
+    subdivision: string | null = null,
     latitud: number | null = null,
     longitud: number | null = null,
     ciudad: string = 'Líbano'
@@ -86,10 +87,11 @@ export async function updatePropertyLocation(
             .update({
                 direccion: address.trim(),
                 barrio: neighborhood.trim(),
-                punto_referencia: puntoReferencia.trim() || null,
+                subdivision: subdivision?.trim() || null,
+                punto_referencia: null, // Deprecated: replaced by POI enrichment
                 latitud: latitud,
                 longitud: longitud,
-                ciudad: ciudad.trim() || 'Líbano', // From geocoding or default
+                ciudad: ciudad.trim() || 'Líbano',
                 updated_at: new Date().toISOString(),
             })
             .eq('id', propertyId);
@@ -102,7 +104,21 @@ export async function updatePropertyLocation(
         // Revalidate the wizard pages to reflect new data
         revalidatePath(`/publicar/crear/${propertyId}`);
 
-        console.log('✅ Location updated for property:', propertyId, { latitud, longitud, ciudad });
+        console.log('✅ Location updated for property:', propertyId, { latitud, longitud, ciudad, subdivision });
+
+        // Fire-and-forget: Enrich property with nearby POIs
+        if (latitud && longitud) {
+            enrichPropertyPOIs(propertyId, latitud, longitud)
+                .then(result => {
+                    if (result.success) {
+                        console.log(`✅ [enrichPOIs] Enriched with ${result.count} POIs`);
+                    } else {
+                        console.warn(`⚠️ [enrichPOIs] Failed: ${result.error}`);
+                    }
+                })
+                .catch(err => console.error('❌ [enrichPOIs] Unexpected:', err));
+        }
+
         return { success: true };
 
     } catch (err: any) {
