@@ -1,13 +1,14 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { Inter } from 'next/font/google';
-import { Loader2, Minus, Plus, MapPin, Home, ChevronRight, Navigation, AlertTriangle, Trash2 } from 'lucide-react';
+import { Loader2, Minus, Plus, MapPin, Home, ChevronRight, Navigation, AlertTriangle, Trash2, Search } from 'lucide-react';
 import { GoogleMap, MarkerF, useJsApiLoader } from '@react-google-maps/api';
 import { updatePropertyLocation } from '@/app/actions/updateLocation';
 import { savePropertyFeatures } from '@/app/actions/saveFeatures';
 import { deletePropertyDraft } from '@/app/actions/publish';
+import { enrichPOIs } from '@/app/actions/enrichPOIs';
 import { supabase } from '@/lib/supabase';
 
 const inter = Inter({
@@ -16,8 +17,23 @@ const inter = Inter({
 });
 
 // ═══════════════════════════════════════════════════════════════
-// UBICACIONES - Categorized neighborhoods for Líbano, Tolima
+// CITY CONFIG — Centers, neighborhoods, and subdivision logic
 // ═══════════════════════════════════════════════════════════════
+const CITY_CENTERS: Record<string, { lat: number; lng: number }> = {
+    'El Líbano': { lat: 4.9213, lng: -75.0665 },
+    'Bogotá': { lat: 4.6510, lng: -74.0817 },
+    'Medellín': { lat: 6.2476, lng: -75.5658 },
+    'Cali': { lat: 3.4516, lng: -76.5320 },
+    'Barranquilla': { lat: 10.9685, lng: -74.7813 },
+    'Cartagena': { lat: 10.3910, lng: -75.5144 },
+    'Bucaramanga': { lat: 7.1254, lng: -73.1198 },
+    'Ibagué': { lat: 4.4389, lng: -75.2322 },
+};
+
+const ALL_CITIES = Object.keys(CITY_CENTERS);
+
+const COMUNA_CITIES = ['Medellín', 'Cali', 'Bucaramanga', 'Ibagué'];
+
 const UBICACIONES = {
     "Barrios Líbano": [
         "1 de Mayo", "20 de Julio", "Carlos Pizarro", "Cidral", "Coloyita",
@@ -32,6 +48,14 @@ const UBICACIONES = {
     ]
 };
 
+// Bogotá localidades
+const BOGOTA_LOCALIDADES = [
+    'Usaquén', 'Chapinero', 'Santa Fe', 'San Cristóbal', 'Usme', 'Tunjuelito',
+    'Bosa', 'Kennedy', 'Fontibón', 'Engativá', 'Suba', 'Barrios Unidos',
+    'Teusaquillo', 'Los Mártires', 'Antonio Nariño', 'Puente Aranda',
+    'La Candelaria', 'Rafael Uribe Uribe', 'Ciudad Bolívar', 'Sumapaz'
+];
+
 const SERVICIOS_LIST = ['Agua', 'Luz', 'Gas Natural', 'Internet', 'Telefonía', 'TV Cable'];
 
 const AMENIDADES_LIST = [
@@ -39,16 +63,89 @@ const AMENIDADES_LIST = [
     'Patio', 'Vigilancia', 'Ascensor', 'Zona BBQ', 'Salón Comunal', 'Depósito', 'Cocina Integral',
 ];
 
-// Líbano, Tolima coordinates
-const LIBANO_CENTER = { lat: 4.9213, lng: -75.0665 };
+// Google Maps Libraries
+const MAPS_LIBRARIES: ("places")[] = ['places'];
 
-// Google Maps container style
 const mapContainerStyle = {
     width: '100%',
-    height: '300px',
-    borderRadius: '8px',
+    height: '350px',
+    borderRadius: '12px',
 };
 
+// ═══════════════════════════════════════════════════════════════
+// FORMAT ADDRESS UTILITY
+// Constructs: "[Address], [Subdivision], [City], [Country]"
+// ═══════════════════════════════════════════════════════════════
+function formatAddress(components: google.maps.GeocoderAddressComponent[], placeName?: string): {
+    formatted: string;
+    route: string;
+    streetNumber: string;
+    neighborhood: string;
+    sublocality: string;
+    city: string;
+    country: string;
+} {
+    let route = '';
+    let streetNumber = '';
+    let neighborhood = '';
+    let sublocality = '';
+    let city = '';
+    let country = '';
+
+    for (const component of components) {
+        const types = component.types;
+        if (types.includes('route')) route = component.long_name;
+        if (types.includes('street_number')) streetNumber = component.long_name;
+        if (types.includes('neighborhood')) neighborhood = component.long_name;
+        if (types.includes('sublocality_level_1') || types.includes('sublocality')) {
+            sublocality = component.long_name;
+        }
+        if (types.includes('locality')) city = component.long_name;
+        if (types.includes('country')) country = component.long_name;
+    }
+
+    // BUILD: "[Address], [Subdivision], [City], [Country]"
+    const parts: string[] = [];
+
+    // 1. PLACE / ADDRESS
+    if (route && streetNumber) {
+        parts.push(`${route} #${streetNumber}`);
+    } else if (route) {
+        parts.push(route);
+    } else if (placeName) {
+        parts.push(placeName);
+    }
+
+    // 2. SUBDIVISION (neighborhood or sublocality)
+    const subdivision = neighborhood || sublocality;
+    if (subdivision) {
+        parts.push(subdivision);
+    }
+
+    // 3. CITY
+    if (city) {
+        parts.push(city);
+    }
+
+    // 4. COUNTRY
+    if (country) {
+        parts.push(country);
+    }
+
+    return {
+        formatted: parts.join(', '),
+        route,
+        streetNumber,
+        neighborhood,
+        sublocality,
+        city,
+        country,
+    };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MAIN COMPONENT
+// ═══════════════════════════════════════════════════════════════
 export default function Paso1Page() {
     const router = useRouter();
     const params = useParams();
@@ -60,21 +157,30 @@ export default function Paso1Page() {
     const [isSavingAndExit, setIsSavingAndExit] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
 
-    // Fatal error state - shows recovery UI instead of redirecting
+    // Fatal error state
     const [fatalError, setFatalError] = useState<{ message: string; canDelete: boolean } | null>(null);
     const [error, setError] = useState<string | null>(null);
 
     // Location state
     const [address, setAddress] = useState('');
     const [neighborhood, setNeighborhood] = useState('');
-    const [puntoReferencia, setPuntoReferencia] = useState('');
+    const [subdivision, setSubdivision] = useState('');
     const [latitud, setLatitud] = useState<number | null>(null);
     const [longitud, setLongitud] = useState<number | null>(null);
-    const [ciudad, setCiudad] = useState<string>('Líbano'); // Auto-detected from geocoding
+    const [ciudad, setCiudad] = useState<string>('El Líbano');
     const [isGeocodingLoading, setIsGeocodingLoading] = useState(false);
+    const [pinPlaced, setPinPlaced] = useState(false);
+    const [direccionFormateada, setDireccionFormateada] = useState<string>('');
 
-    // Map marker position (for controlled component)
-    const [markerPosition, setMarkerPosition] = useState(LIBANO_CENTER);
+    // Map state
+    const [markerPosition, setMarkerPosition] = useState(CITY_CENTERS['El Líbano']);
+    const [mapCenter, setMapCenter] = useState(CITY_CENTERS['El Líbano']);
+
+    // Refs
+    const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
+    const searchInputRef = useRef<HTMLInputElement | null>(null);
+    const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const mapInstanceRef = useRef<google.maps.Map | null>(null);
 
     // Characteristics state
     const [habitaciones, setHabitaciones] = useState(0);
@@ -87,19 +193,23 @@ export default function Paso1Page() {
     const [amenidades, setAmenidades] = useState<string[]>([]);
 
     // ═══════════════════════════════════════════════════════════════
-    // GOOGLE MAPS LOADER
+    // GOOGLE MAPS LOADER (with Places library)
     // ═══════════════════════════════════════════════════════════════
     const { isLoaded: isMapLoaded } = useJsApiLoader({
         id: 'google-map-script',
         googleMapsApiKey: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '',
+        libraries: MAPS_LIBRARIES,
     });
 
     // ═══════════════════════════════════════════════════════════════
-    // FORM VALIDATION
+    // FORM VALIDATION — Pin is MANDATORY
     // ═══════════════════════════════════════════════════════════════
     const isFormValid =
         address.trim().length > 0 &&
         neighborhood !== '' &&
+        latitud !== null &&
+        longitud !== null &&
+        pinPlaced &&
         habitaciones > 0 &&
         banos > 0 &&
         area > 0 &&
@@ -107,9 +217,16 @@ export default function Paso1Page() {
         servicios.length > 0;
 
     // ═══════════════════════════════════════════════════════════════
-    // LOAD EXISTING DATA (State Re-hydration)
+    // DYNAMIC UI — Determine subdivision type per city
     // ═══════════════════════════════════════════════════════════════
+    const getSubdivisionType = useCallback((): 'localidad' | 'comuna' | 'barrio_list' | 'free_text' => {
+        if (ciudad === 'Bogotá') return 'localidad';
+        if (COMUNA_CITIES.includes(ciudad)) return 'comuna';
+        if (ciudad === 'El Líbano') return 'barrio_list';
+        return 'free_text';
+    }, [ciudad]);
 
+    const subdivisionType = getSubdivisionType();
 
     // ═══════════════════════════════════════════════════════════════
     // LOAD EXISTING DATA (State Re-hydration) with Recovery Pattern
@@ -130,77 +247,56 @@ export default function Paso1Page() {
             try {
                 const { data, error: fetchError } = await supabase
                     .from('inmuebles')
-                    .select('direccion, barrio, punto_referencia, latitud, longitud, habitaciones, banos, area_m2, estrato, servicios, amenities, propietario_id')
+                    .select('direccion, barrio, subdivision, latitud, longitud, ciudad, direccion_formateada, habitaciones, banos, area_m2, estrato, servicios, amenities, propietario_id' as any)
                     .eq('id', propertyId)
                     .single();
 
                 if (fetchError) {
                     console.error('[Paso1] Supabase fetch error:', fetchError);
-
-                    // ═══════════════════════════════════════════════════════════════
-                    // RECOVERY PATTERN: Show recovery UI instead of redirecting
-                    // This prevents infinite loops when /publicar/tipo redirects back
-                    // ═══════════════════════════════════════════════════════════════
                     if (fetchError.code === 'PGRST116') {
-                        // Property not found - offer to start fresh
-                        setFatalError({
-                            message: 'Este borrador no existe o fue eliminado.',
-                            canDelete: false
-                        });
+                        setFatalError({ message: 'Este borrador no existe o fue eliminado.', canDelete: false });
                     } else {
-                        // Other database error - offer to delete and start fresh
-                        setFatalError({
-                            message: 'Encontramos un problema al cargar tu borrador. Los datos pueden estar corruptos.',
-                            canDelete: true
-                        });
+                        setFatalError({ message: 'Encontramos un problema al cargar tu borrador.', canDelete: true });
                     }
                     return;
                 }
 
                 if (!data) {
-                    console.log('[Paso1] No data found for property:', propertyId);
-                    setFatalError({
-                        message: 'No se encontró información del borrador.',
-                        canDelete: false
-                    });
+                    setFatalError({ message: 'No se encontró información del borrador.', canDelete: false });
                     return;
                 }
 
-                console.log('[Paso1] Data loaded successfully:', data);
+                console.log('[Paso1] Data loaded successfully');
 
-                // Populate form state with fetched data (null-safe)
-                setAddress(data.direccion ?? '');
-                setNeighborhood(data.barrio ?? '');
-                setPuntoReferencia(data.punto_referencia ?? '');
-                setLatitud(data.latitud ?? null);
-                setLongitud(data.longitud ?? null);
-                setHabitaciones(data.habitaciones ?? 0);
-                setBanos(data.banos ?? 0);
-                setArea(data.area_m2 ?? 0);
-                setEstrato(data.estrato ?? 3);
+                // Populate form state (null-safe)
+                setAddress((data as any).direccion ?? '');
+                setNeighborhood((data as any).barrio ?? '');
+                setSubdivision((data as any).subdivision ?? '');
+                setLatitud((data as any).latitud ?? null);
+                setLongitud((data as any).longitud ?? null);
+                setCiudad((data as any).ciudad ?? 'El Líbano');
+                setDireccionFormateada((data as any).direccion_formateada ?? '');
+                setHabitaciones((data as any).habitaciones ?? 0);
+                setBanos((data as any).banos ?? 0);
+                setArea((data as any).area_m2 ?? 0);
+                setEstrato((data as any).estrato ?? 3);
 
-                // Set marker position if coordinates exist
-                if (data.latitud && data.longitud) {
-                    setMarkerPosition({ lat: data.latitud, lng: data.longitud });
+                // Set marker + map center if coordinates exist
+                if ((data as any).latitud && (data as any).longitud) {
+                    const pos = { lat: (data as any).latitud, lng: (data as any).longitud };
+                    setMarkerPosition(pos);
+                    setMapCenter(pos);
+                    setPinPlaced(true);
                 }
 
-                // Handle arrays with null coalescing and type safety
-                setServicios(Array.isArray(data.servicios) ? data.servicios : []);
-                setAmenidades(Array.isArray(data.amenities) ? data.amenities : []);
+                // Handle arrays
+                setServicios(Array.isArray((data as any).servicios) ? (data as any).servicios : []);
+                setAmenidades(Array.isArray((data as any).amenities) ? (data as any).amenities : []);
 
             } catch (err: any) {
                 console.error('[Paso1] Unexpected error loading data:', err);
-
-                // ═══════════════════════════════════════════════════════════════
-                // FATAL ERROR RECOVERY: Network errors, image loading issues, etc.
-                // DO NOT REDIRECT - Show recovery UI instead
-                // ═══════════════════════════════════════════════════════════════
-                setFatalError({
-                    message: `Error inesperado: ${err.message || 'No se pudo cargar el borrador'}`,
-                    canDelete: true
-                });
+                setFatalError({ message: `Error inesperado: ${err.message}`, canDelete: true });
             } finally {
-                console.log('[Paso1] Data load complete, stopping spinner');
                 setIsLoading(false);
             }
         };
@@ -209,7 +305,119 @@ export default function Paso1Page() {
     }, [propertyId]);
 
     // ═══════════════════════════════════════════════════════════════
-    // REVERSE GEOCODING: Extract city from coordinates
+    // AUTOCOMPLETE SETUP — Flow A: Input → Map
+    // ═══════════════════════════════════════════════════════════════
+    useEffect(() => {
+        if (!isMapLoaded || !searchInputRef.current) return;
+        if (autocompleteRef.current) return;
+
+        // Polling — wait for Google Places to be fully available
+        const pollInterval = setInterval(() => {
+            if (!window.google?.maps?.places) {
+                console.log('[Autocomplete] Waiting for Places library...');
+                return;
+            }
+            clearInterval(pollInterval);
+
+            if (!searchInputRef.current || autocompleteRef.current) return;
+
+            try {
+                const autocomplete = new window.google.maps.places.Autocomplete(searchInputRef.current, {
+                    componentRestrictions: { country: 'co' },
+                    fields: ['geometry', 'formatted_address', 'name', 'address_components'],
+                    types: ['geocode', 'establishment'],
+                });
+
+                autocomplete.addListener('place_changed', () => {
+                    const place = autocomplete.getPlace();
+                    if (place.geometry?.location) {
+                        const newLat = place.geometry.location.lat();
+                        const newLng = place.geometry.location.lng();
+                        const newPos = { lat: newLat, lng: newLng };
+
+                        setMarkerPosition(newPos);
+                        setMapCenter(newPos);
+                        setLatitud(newLat);
+                        setLongitud(newLng);
+                        setPinPlaced(true);
+
+                        if (mapInstanceRef.current) {
+                            mapInstanceRef.current.panTo(newPos);
+                            mapInstanceRef.current.setZoom(17);
+                        }
+
+                        if (place.address_components) {
+                            const parsed = formatAddress(place.address_components, place.name);
+
+                            setDireccionFormateada(parsed.formatted);
+                            if (searchInputRef.current) {
+                                searchInputRef.current.value = parsed.formatted;
+                            }
+
+                            if (parsed.route && parsed.streetNumber) {
+                                setAddress(`${parsed.route} #${parsed.streetNumber}`);
+                            } else if (parsed.route) {
+                                setAddress(parsed.route);
+                            }
+
+                            const barrio = parsed.neighborhood || parsed.sublocality;
+                            if (barrio) {
+                                setNeighborhood(prev => prev.trim() ? prev : barrio);
+                                if (parsed.sublocality) {
+                                    setSubdivision(parsed.sublocality);
+                                }
+                            }
+
+                            if (parsed.city) {
+                                const matchedCity = ALL_CITIES.find(c =>
+                                    parsed.city.toLowerCase().includes(c.toLowerCase()) ||
+                                    c.toLowerCase().includes(parsed.city.toLowerCase())
+                                );
+                                setCiudad(matchedCity || parsed.city);
+                            }
+
+                            console.log('[Autocomplete] formatAddress →', parsed.formatted);
+                        }
+
+                        if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+                        debounceTimerRef.current = setTimeout(() => {
+                            reverseGeocode(newLat, newLng);
+                        }, 3000);
+                    }
+                });
+
+                autocompleteRef.current = autocomplete;
+                console.log('[Autocomplete] ATTACHED');
+            } catch (err) {
+                console.error('[Autocomplete] Failed to initialize:', err);
+            }
+        }, 500);
+
+        // Cleanup: stop polling on unmount
+        return () => clearInterval(pollInterval);
+    }, [isMapLoaded]);
+
+    // ═══════════════════════════════════════════════════════════════
+    // Reactive panTo effect — moves map when mapCenter changes
+    // ═══════════════════════════════════════════════════════════════
+    useEffect(() => {
+        if (mapInstanceRef.current && mapCenter) {
+            mapInstanceRef.current.panTo(mapCenter);
+        }
+    }, [mapCenter]);
+
+    // ═══════════════════════════════════════════════════════════════
+    // Pre-fill search bar with saved address on load
+    // ═══════════════════════════════════════════════════════════════
+    useEffect(() => {
+        if (direccionFormateada && searchInputRef.current) {
+            searchInputRef.current.value = direccionFormateada;
+        }
+    }, [direccionFormateada]);
+
+    // ═══════════════════════════════════════════════════════════════
+    // REVERSE GEOCODING — Flow B: Map drag → Update ALL form fields
+    // Uses formatAddress for consistent string construction
     // ═══════════════════════════════════════════════════════════════
     const reverseGeocode = useCallback(async (lat: number, lng: number) => {
         if (!window.google) return;
@@ -221,35 +429,54 @@ export default function Paso1Page() {
 
             if (response.results && response.results.length > 0) {
                 const result = response.results[0];
-                console.log('[Geocoder] Full result:', result);
 
-                // Extract city from address components
-                let detectedCity = 'Líbano'; // Default fallback
-                for (const component of result.address_components) {
-                    // Try locality first (city name)
-                    if (component.types.includes('locality')) {
-                        detectedCity = component.long_name;
-                        break;
-                    }
-                    // Fallback to administrative_area_level_2 (municipality)
-                    if (component.types.includes('administrative_area_level_2')) {
-                        detectedCity = component.long_name;
+                // Use formatAddress for consistent output
+                const parsed = formatAddress(result.address_components);
+
+                // ── Update formatted address → search bar text ──
+                if (parsed.formatted) {
+                    setDireccionFormateada(parsed.formatted);
+                    if (searchInputRef.current) {
+                        searchInputRef.current.value = parsed.formatted;
                     }
                 }
 
-                setCiudad(detectedCity);
-                console.log('[Geocoder] Detected city:', detectedCity);
+                // ── Set city ──
+                if (parsed.city) {
+                    const matchedCity = ALL_CITIES.find(c =>
+                        parsed.city.toLowerCase().includes(c.toLowerCase()) ||
+                        c.toLowerCase().includes(parsed.city.toLowerCase())
+                    );
+                    setCiudad(matchedCity || parsed.city);
+                }
+
+                // ── Set neighborhood / barrio ──
+                const barrio = parsed.neighborhood || parsed.sublocality;
+                if (barrio) {
+                    setNeighborhood(barrio);
+                    if (parsed.sublocality) {
+                        setSubdivision(parsed.sublocality);
+                    }
+                }
+
+                // ── Set address from route + street number ──
+                if (parsed.route && parsed.streetNumber) {
+                    setAddress(`${parsed.route} #${parsed.streetNumber}`);
+                } else if (parsed.route) {
+                    setAddress(parsed.route);
+                }
+
+                console.log('[Geocoder] formatAddress →', parsed);
             }
         } catch (err) {
             console.error('[Geocoder] Error:', err);
-            // Keep default city on error
         } finally {
             setIsGeocodingLoading(false);
         }
     }, []);
 
     // ═══════════════════════════════════════════════════════════════
-    // MAP HANDLERS
+    // MAP HANDLERS — Debounced (3s) reverse geocode
     // ═══════════════════════════════════════════════════════════════
     const handleMarkerDragEnd = useCallback((e: google.maps.MapMouseEvent) => {
         if (e.latLng) {
@@ -258,10 +485,13 @@ export default function Paso1Page() {
             setMarkerPosition({ lat: newLat, lng: newLng });
             setLatitud(newLat);
             setLongitud(newLng);
-            console.log('[Map] Marker moved to:', { lat: newLat, lng: newLng });
+            setPinPlaced(true);
+            console.log('[Map] Marker dragged to:', { lat: newLat, lng: newLng });
 
-            // Trigger reverse geocoding to detect city
-            reverseGeocode(newLat, newLng);
+            if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+            debounceTimerRef.current = setTimeout(() => {
+                reverseGeocode(newLat, newLng);
+            }, 3000);
         }
     }, [reverseGeocode]);
 
@@ -272,10 +502,13 @@ export default function Paso1Page() {
             setMarkerPosition({ lat: newLat, lng: newLng });
             setLatitud(newLat);
             setLongitud(newLng);
+            setPinPlaced(true);
             console.log('[Map] Clicked at:', { lat: newLat, lng: newLng });
 
-            // Trigger reverse geocoding to detect city
-            reverseGeocode(newLat, newLng);
+            if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+            debounceTimerRef.current = setTimeout(() => {
+                reverseGeocode(newLat, newLng);
+            }, 3000);
         }
     }, [reverseGeocode]);
 
@@ -304,15 +537,16 @@ export default function Paso1Page() {
         setIsSaving(true);
 
         try {
-            // Save location with new fields including ciudad from geocoding
+            // Save location (subdivision explicitly passed)
             const locationResult = await updatePropertyLocation(
                 propertyId,
                 address.trim(),
                 neighborhood,
-                puntoReferencia,
+                subdivision || null,
                 latitud,
                 longitud,
-                ciudad
+                ciudad,
+                direccionFormateada || null
             );
 
             if (!locationResult.success) {
@@ -335,43 +569,61 @@ export default function Paso1Page() {
                 throw new Error(featuresResult.error || 'Error al guardar características');
             }
 
-            router.push(`/publicar/crear/${propertyId}/paso-2`);
+            // Fire-and-forget POI enrichment
+            if (latitud && longitud) {
+                enrichPOIs(propertyId, latitud, longitud).catch(err =>
+                    console.warn('[handleContinue] POI enrichment failed:', err)
+                );
+            }
+
+            // FORCED NAVIGATION — bypass React router entirely
+            console.log('[handleContinue] ✅ Saves complete. Navigating to paso-2...');
+            window.location.assign(`/publicar/crear/${propertyId}/paso-2`);
 
         } catch (err: any) {
             console.error('Save error:', err);
             setError(err.message || 'Error al guardar. Intenta de nuevo.');
-        } finally {
             setIsSaving(false);
         }
     };
 
     // ═══════════════════════════════════════════════════════════════
-    // SAVE AND EXIT (Guardar y Volver)
+    // SAVE AND EXIT — ALWAYS persists location if ANY data exists
     // ═══════════════════════════════════════════════════════════════
     const handleSaveAndExit = async () => {
         setError(null);
         setIsSavingAndExit(true);
 
+        // Safety: force-kill spinner after 2s no matter what
+        const spinnerTimeout = setTimeout(() => {
+            setIsSavingAndExit(false);
+            console.warn('[SaveAndExit] Spinner timeout — forcing redirect');
+            window.location.assign('/mis-inmuebles');
+        }, 2000);
+
         try {
-            // Save location (only if we have required fields)
-            if (address.trim() && neighborhood) {
+            const hasLocationData = latitud !== null || longitud !== null || address.trim() || ciudad;
+            if (hasLocationData) {
+                console.log('[SaveAndExit] Saving location:', { latitud, longitud, ciudad, subdivision, address: address.trim() });
                 const locationResult = await updatePropertyLocation(
                     propertyId,
-                    address.trim(),
-                    neighborhood,
-                    puntoReferencia,
+                    address.trim() || direccionFormateada || 'Sin dirección',
+                    neighborhood || 'Sin barrio',
+                    subdivision || null,
                     latitud,
                     longitud,
-                    ciudad
+                    ciudad,
+                    direccionFormateada || null
                 );
 
                 if (!locationResult.success) {
-                    console.warn('Location save warning:', locationResult.error);
+                    console.warn('[SaveAndExit] Location save warning:', locationResult.error);
+                } else {
+                    console.log('[SaveAndExit] ✅ Location persisted successfully');
                 }
             }
 
-            // Save features (only if we have some data)
-            if (habitaciones > 0 || banos > 0 || area > 0 || servicios.length > 0) {
+            if (habitaciones > 0 || banos > 0 || area > 0 || servicios.length > 0 || amenidades.length > 0) {
                 const featuresResult = await savePropertyFeatures(
                     propertyId,
                     habitaciones,
@@ -384,17 +636,28 @@ export default function Paso1Page() {
                 );
 
                 if (!featuresResult.success) {
-                    console.warn('Features save warning:', featuresResult.error);
+                    console.warn('[SaveAndExit] Features save warning:', featuresResult.error);
                 }
             }
 
-            // Redirect to dashboard
-            router.push('/mis-inmuebles');
+            // Fire-and-forget POI enrichment
+            if (latitud && longitud) {
+                enrichPOIs(propertyId, latitud, longitud).catch(err =>
+                    console.warn('[SaveAndExit] POI enrichment failed:', err)
+                );
+            }
+
+            clearTimeout(spinnerTimeout);
+            setIsSavingAndExit(false);
+
+            // FORCED NAVIGATION
+            console.log('[SaveAndExit] ✅ Saves complete. Redirecting...');
+            window.location.assign('/mis-inmuebles');
 
         } catch (err: any) {
-            console.error('Save and exit error:', err);
+            clearTimeout(spinnerTimeout);
+            console.error('[SaveAndExit] Error:', err);
             setError(err.message || 'Error al guardar. Intenta de nuevo.');
-        } finally {
             setIsSavingAndExit(false);
         }
     };
@@ -438,26 +701,20 @@ export default function Paso1Page() {
 
     // ═══════════════════════════════════════════════════════════════
     // RECOVERY UI: Show when draft fails to load
-    // This prevents infinite redirect loops
     // ═══════════════════════════════════════════════════════════════
     if (fatalError) {
         return (
             <div className={`${inter.className} flex flex-col items-center justify-center min-h-[400px] p-8`}>
                 <div className="max-w-md w-full bg-white border border-red-200 rounded-lg shadow-lg p-8 text-center">
-                    {/* Error Icon */}
                     <div className="w-16 h-16 mx-auto mb-6 bg-red-100 rounded-full flex items-center justify-center">
                         <AlertTriangle className="w-8 h-8 text-red-600" />
                     </div>
-
-                    {/* Error Message */}
                     <h2 className="text-xl font-semibold text-slate-800 mb-2">
                         Problema al cargar el borrador
                     </h2>
                     <p className="text-slate-600 mb-6">
                         {fatalError.message}
                     </p>
-
-                    {/* Action Buttons */}
                     <div className="space-y-3">
                         {fatalError.canDelete && (
                             <button
@@ -478,19 +735,13 @@ export default function Paso1Page() {
                                 )}
                             </button>
                         )}
-
                         <button
-                            onClick={() => router.push('/publicar/tipo')}
-                            className="w-full px-6 py-3 bg-slate-100 text-slate-700 font-medium rounded-lg hover:bg-slate-200 transition-colors"
+                            onClick={() => router.push('/mis-inmuebles')}
+                            className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-slate-100 text-slate-700 font-medium rounded-lg hover:bg-slate-200 transition-colors"
                         >
-                            Volver a Selección de Tipo
+                            Volver al Dashboard
                         </button>
                     </div>
-
-                    {/* Error display */}
-                    {error && (
-                        <p className="mt-4 text-sm text-red-600">{error}</p>
-                    )}
                 </div>
             </div>
         );
@@ -521,6 +772,23 @@ export default function Paso1Page() {
                     <h2 className="text-lg font-semibold text-[#0c263b]">Ubicación</h2>
                 </div>
 
+                {/* Google Places Search Bar */}
+                <div className="mb-5">
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                        <Search className="inline w-4 h-4 mr-1" />
+                        Buscar Dirección
+                    </label>
+                    <input
+                        ref={searchInputRef}
+                        type="text"
+                        placeholder="Busca una dirección, lugar o punto de referencia..."
+                        className="w-full h-12 px-4 bg-white border-2 border-[#0c263b]/20 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#0c263b] focus:border-transparent text-base"
+                    />
+                    <p className="mt-1 text-xs text-slate-400">
+                        Busca y selecciona una dirección. El mapa se moverá automáticamente.
+                    </p>
+                </div>
+
                 <div className="grid md:grid-cols-2 gap-5">
                     {/* Address */}
                     <div>
@@ -531,49 +799,72 @@ export default function Paso1Page() {
                             type="text"
                             value={address}
                             onChange={(e) => setAddress(e.target.value)}
-                            placeholder="Ej: Calle 10 #5-42"
+                            placeholder="Ej: Carrera 7 #32-16"
                             className="w-full h-11 px-3 bg-white border border-gray-300 rounded-md text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#0c263b] focus:border-transparent"
                         />
                     </div>
 
-                    {/* Neighborhood - Categorized Select */}
+                    {/* Neighborhood — Dynamic per city */}
                     <div>
                         <label className="block text-sm font-medium text-slate-700 mb-1.5">
                             Barrio <span className="text-red-500 ml-1">*</span>
                         </label>
-                        <select
-                            value={neighborhood}
-                            onChange={(e) => setNeighborhood(e.target.value)}
-                            className="w-full h-11 px-3 bg-white border border-gray-300 rounded-md text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#0c263b] focus:border-transparent"
-                        >
-                            <option value="">Seleccionar barrio</option>
-                            {Object.entries(UBICACIONES).map(([category, barrios]) => (
-                                <optgroup key={category} label={category}>
-                                    {barrios.map(barrio => (
-                                        <option key={barrio} value={barrio}>{barrio}</option>
-                                    ))}
-                                </optgroup>
-                            ))}
-                        </select>
+                        {subdivisionType === 'barrio_list' ? (
+                            <select
+                                value={neighborhood}
+                                onChange={(e) => setNeighborhood(e.target.value)}
+                                className="w-full h-11 px-3 bg-white border border-gray-300 rounded-md text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#0c263b] focus:border-transparent"
+                            >
+                                <option value="">Seleccionar barrio</option>
+                                {Object.entries(UBICACIONES).map(([category, barrios]) => (
+                                    <optgroup key={category} label={category}>
+                                        {barrios.map(barrio => (
+                                            <option key={barrio} value={barrio}>{barrio}</option>
+                                        ))}
+                                    </optgroup>
+                                ))}
+                            </select>
+                        ) : (
+                            <input
+                                type="text"
+                                value={neighborhood}
+                                onChange={(e) => setNeighborhood(e.target.value)}
+                                placeholder="Ej: La Candelaria"
+                                className="w-full h-11 px-3 bg-white border border-gray-300 rounded-md text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#0c263b] focus:border-transparent"
+                            />
+                        )}
                     </div>
                 </div>
 
-                {/* Punto de Referencia */}
-                <div className="mt-5">
-                    <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                        Punto de Referencia <span className="text-slate-400 text-xs">(Para la IA)</span>
-                    </label>
-                    <input
-                        type="text"
-                        value={puntoReferencia}
-                        onChange={(e) => setPuntoReferencia(e.target.value)}
-                        placeholder="Ej: Cerca al Hospital, A dos cuadras del Parque..."
-                        className="w-full h-11 px-3 bg-white border border-gray-300 rounded-md text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#0c263b] focus:border-transparent"
-                    />
-                    <p className="mt-1 text-xs text-slate-400">
-                        Describe un punto conocido cercano para ayudar a ubicar mejor el inmueble.
-                    </p>
-                </div>
+                {/* Subdivision — Dynamic per city */}
+                {subdivisionType !== 'barrio_list' && (
+                    <div className="mt-5">
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                            {subdivisionType === 'localidad' ? 'Localidad' : subdivisionType === 'comuna' ? 'Comuna' : 'Zona / Localidad'}
+                            <span className="text-slate-400 text-xs ml-2">(Opcional)</span>
+                        </label>
+                        {subdivisionType === 'localidad' ? (
+                            <select
+                                value={subdivision}
+                                onChange={(e) => setSubdivision(e.target.value)}
+                                className="w-full h-11 px-3 bg-white border border-gray-300 rounded-md text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#0c263b] focus:border-transparent"
+                            >
+                                <option value="">Seleccionar localidad</option>
+                                {BOGOTA_LOCALIDADES.map(loc => (
+                                    <option key={loc} value={loc}>{loc}</option>
+                                ))}
+                            </select>
+                        ) : (
+                            <input
+                                type="text"
+                                value={subdivision}
+                                onChange={(e) => setSubdivision(e.target.value)}
+                                placeholder={subdivisionType === 'comuna' ? 'Ej: Comuna 14 - El Poblado' : 'Ej: Zona Norte'}
+                                className="w-full h-11 px-3 bg-white border border-gray-300 rounded-md text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#0c263b] focus:border-transparent"
+                            />
+                        )}
+                    </div>
+                )}
 
                 {/* Google Maps */}
                 <div className="mt-5">
@@ -589,9 +880,10 @@ export default function Paso1Page() {
                         <div className="border border-gray-200 rounded-lg overflow-hidden">
                             <GoogleMap
                                 mapContainerStyle={mapContainerStyle}
-                                center={markerPosition}
+                                center={mapCenter}
                                 zoom={15}
                                 onClick={handleMapClick}
+                                onLoad={(map) => { mapInstanceRef.current = map; }}
                                 options={{
                                     streetViewControl: false,
                                     mapTypeControl: false,
@@ -606,7 +898,7 @@ export default function Paso1Page() {
                             </GoogleMap>
                         </div>
                     ) : (
-                        <div className="h-[300px] bg-slate-100 rounded-lg flex items-center justify-center">
+                        <div className="h-[350px] bg-slate-100 rounded-lg flex items-center justify-center">
                             <Loader2 className="w-6 h-6 text-slate-400 animate-spin" />
                         </div>
                     )}
@@ -624,7 +916,7 @@ export default function Paso1Page() {
                                     <div className="flex items-center gap-2 text-sm text-green-700">
                                         <MapPin className="w-4 h-4" />
                                         <span>
-                                            Ubicación marcada en: <strong>{ciudad}, Tolima</strong>
+                                            Ubicación marcada en: <strong>{ciudad}</strong>
                                         </span>
                                     </div>
                                 ) : (
@@ -633,10 +925,10 @@ export default function Paso1Page() {
                                         <span>Haz clic en el mapa para marcar la ubicación</span>
                                     </div>
                                 )}
-                                {address && (
+                                {direccionFormateada && (
                                     <div className="flex items-center gap-2 text-sm text-slate-600">
                                         <Home className="w-4 h-4" />
-                                        <span>Dirección: {address}</span>
+                                        <span>{direccionFormateada}</span>
                                     </div>
                                 )}
                             </div>

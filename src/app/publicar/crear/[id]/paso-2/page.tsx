@@ -113,10 +113,10 @@ export default function Paso2Page() {
     const isMountedRef = useRef(true);
     const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
 
-    // Load Data Effect — uses loadId to prevent stale async from setting state
+    // Load Data Effect — PARALLELIZED for speed
     useEffect(() => {
         isMountedRef.current = true;
-        let cancelled = false; // local cancellation flag (immune to re-mount race)
+        let cancelled = false;
 
         const loadData = async () => {
             setIsLoading(true);
@@ -124,14 +124,19 @@ export default function Paso2Page() {
             setDraftNotFound(false);
 
             try {
-                // 1. Fetch Property Details (server action — uses service role)
-                const details = await getListingDetails(propertyId);
+                // ── GROUP 1: Three independent fetches in parallel ──
+                const [details, propResult, userResult] = await Promise.all([
+                    getListingDetails(propertyId),
+                    supabase.from('inmuebles').select('*').eq('id', propertyId).single(),
+                    supabase.auth.getUser(),
+                ]);
                 if (cancelled) return;
 
+                // Process details (server action result)
                 if (!details) {
                     console.warn('[Paso2] getListingDetails returned null — draft not found');
                     setDraftNotFound(true);
-                    return; // finally will still fire
+                    return;
                 }
 
                 setTitle(details.title || '');
@@ -143,14 +148,8 @@ export default function Paso2Page() {
                 }
                 setOfferType(details.offerType === 'arriendo' ? 'arriendo' : 'venta');
 
-                // 2. Fetch full property row (client supabase — for extra fields)
-                const { data: propData, error: propError } = await supabase
-                    .from('inmuebles')
-                    .select('*')
-                    .eq('id', propertyId)
-                    .single();
-                if (cancelled) return;
-
+                // Process propData (full property row)
+                const { data: propData, error: propError } = propResult;
                 if (propError) {
                     console.warn('[Paso2] propData fetch error (non-fatal):', propError.message);
                 }
@@ -181,19 +180,21 @@ export default function Paso2Page() {
                     }
                 }
 
-                // 3. Fetch User & Documents
-                const { data: { user } } = await supabase.auth.getUser();
+                // Process user auth
+                const user = userResult.data?.user;
                 if (cancelled) return;
                 if (user) {
                     setUserId(user.id);
                     setUserEmail(user.email ?? null);
 
-                    const docs = await getUserVerificationDocuments(user.id);
+                    // ── GROUP 2: Two user-dependent fetches in parallel ──
+                    const [docs, approval] = await Promise.all([
+                        getUserVerificationDocuments(user.id),
+                        getUserVerificationApprovalStatus(user.id),
+                    ]);
                     if (cancelled) return;
-                    setDocuments(docs);
 
-                    const approval = await getUserVerificationApprovalStatus(user.id);
-                    if (cancelled) return;
+                    setDocuments(docs);
                     setUserVerificationApproval(approval);
                 }
 
@@ -506,7 +507,73 @@ export default function Paso2Page() {
         );
     };
 
-    if (isLoading) return <div className="p-10 flex justify-center"><Loader2 className="animate-spin" /></div>;
+    // ═══════════════════════════════════════════════════════════════
+    // SKELETON UI — instant visual feedback while data loads
+    // ═══════════════════════════════════════════════════════════════
+    if (isLoading) return (
+        <div className={`${inter.className} space-y-8 animate-pulse`} style={{ fontFamily: 'Lufga, sans-serif' }}>
+            {/* Header skeleton */}
+            <div>
+                <div className="h-7 w-64 bg-slate-200 rounded mb-2" />
+                <div className="h-4 w-80 bg-slate-100 rounded" />
+            </div>
+
+            {/* Section 1: Fotos */}
+            <div className="bg-white border border-gray-200 rounded-md p-6">
+                <div className="h-5 w-24 bg-slate-200 rounded mb-4" />
+                <div className="grid grid-cols-3 gap-3">
+                    <div className="aspect-square bg-slate-100 rounded-md" />
+                    <div className="aspect-square bg-slate-100 rounded-md" />
+                    <div className="aspect-square bg-slate-100 rounded-md" />
+                </div>
+            </div>
+
+            {/* Section 2: Precio y Oferta */}
+            <div className="bg-white border border-gray-200 rounded-md p-6">
+                <div className="h-5 w-36 bg-slate-200 rounded mb-5" />
+                <div className="grid md:grid-cols-2 gap-5">
+                    <div>
+                        <div className="h-4 w-28 bg-slate-100 rounded mb-2" />
+                        <div className="h-11 bg-slate-100 rounded-md" />
+                    </div>
+                    <div>
+                        <div className="h-4 w-32 bg-slate-100 rounded mb-2" />
+                        <div className="h-11 bg-slate-100 rounded-md" />
+                    </div>
+                </div>
+            </div>
+
+            {/* Section 3: Descripción */}
+            <div className="bg-white border border-gray-200 rounded-md p-6">
+                <div className="h-5 w-28 bg-slate-200 rounded mb-5" />
+                <div className="h-4 w-40 bg-slate-100 rounded mb-2" />
+                <div className="h-11 bg-slate-100 rounded-md mb-4" />
+                <div className="h-4 w-24 bg-slate-100 rounded mb-2" />
+                <div className="h-28 bg-slate-100 rounded-md" />
+            </div>
+
+            {/* Section 4: Contacto */}
+            <div className="bg-white border border-gray-200 rounded-md p-6">
+                <div className="h-5 w-24 bg-slate-200 rounded mb-5" />
+                <div className="grid md:grid-cols-2 gap-5">
+                    <div>
+                        <div className="h-4 w-36 bg-slate-100 rounded mb-2" />
+                        <div className="h-11 bg-slate-100 rounded-md" />
+                    </div>
+                    <div>
+                        <div className="h-4 w-24 bg-slate-100 rounded mb-2" />
+                        <div className="h-11 bg-slate-100 rounded-md" />
+                    </div>
+                </div>
+            </div>
+
+            {/* Loading indicator */}
+            <div className="flex items-center justify-center gap-2 py-4">
+                <Loader2 className="animate-spin w-5 h-5 text-slate-400" />
+                <span className="text-sm text-slate-400 font-medium">Cargando detalles del inmueble...</span>
+            </div>
+        </div>
+    );
 
     // ═══════════════════════════════════════════════════════════════
     // DRAFT NOT FOUND — Recovery UI
@@ -847,14 +914,27 @@ export default function Paso2Page() {
                     <button
                         onClick={async () => {
                             setIsSaving(true);
-                            try {
-                                await supabase.from('inmuebles').update(getFormPayload()).eq('id', propertyId);
-                            } catch (e) {
-                                console.warn('Auto-save on exit warning:', e);
-                            } finally {
+
+                            // Safety: force redirect after 2s no matter what
+                            const fallback = setTimeout(() => {
                                 setIsSaving(false);
+                                console.warn('[GuardarYVolver] Timeout — forcing redirect');
+                                window.location.assign('/mis-inmuebles');
+                            }, 2000);
+
+                            try {
+                                const { error: saveErr } = await supabase.from('inmuebles').update(getFormPayload()).eq('id', propertyId);
+                                if (saveErr) {
+                                    console.warn('Auto-save on exit warning:', saveErr.message);
+                                }
+                            } catch (e) {
+                                console.warn('Auto-save on exit exception:', e);
                             }
-                            router.push('/mis-inmuebles');
+
+                            clearTimeout(fallback);
+                            setIsSaving(false);
+                            // FORCED NAVIGATION
+                            window.location.assign('/mis-inmuebles');
                         }}
                         disabled={isSaving}
                         className="flex gap-2 items-center text-slate-600 hover:text-blue-600 transition-colors disabled:opacity-50"

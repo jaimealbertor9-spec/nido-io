@@ -57,3 +57,33 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(156, 163, 175, 0.8);
 }
+
+/* 3. GOOGLE MAPS AUTOCOMPLETE OVERRIDE */
+.pac-container {
+  z-index: 99999 !important;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+  margin-top: 4px;
+  font-family: 'Lufga', 'Inter', sans-serif;
+}
+
+.pac-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #1e293b;
+}
+
+.pac-item:hover {
+  background-color: #f1f5f9;
+}
+
+.pac-item-query {
+  font-weight: 500;
+  color: #0f172a;
+}
+
+.pac-matched {
+  font-weight: 600;
+}
