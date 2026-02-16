@@ -134,8 +134,11 @@ export default function Paso2Page() {
 
                 // Process details (server action result)
                 if (!details) {
-                    console.warn('[Paso2] getListingDetails returned null — draft not found');
+                    console.warn('[Paso2] getListingDetails returned null — draft not found, redirecting to Step 1');
                     setDraftNotFound(true);
+                    setIsLoading(false);
+                    // Redirect back to Step 1 instead of hanging
+                    window.location.href = `/publicar/crear/${propertyId}/paso-1`;
                     return;
                 }
 
@@ -454,12 +457,14 @@ export default function Paso2Page() {
 
             console.log('✅ [EditMode] Property updated successfully');
             alert('¡Cambios guardados exitosamente!');
-            router.push('/mis-inmuebles');
+            setIsSaving(false);
+            setTimeout(() => {
+                window.location.href = '/mis-inmuebles';
+            }, 100);
 
         } catch (e: any) {
             console.error('❌ [EditMode] Save error:', e);
             setError(e.message || 'Error guardando cambios. Intenta nuevamente.');
-        } finally {
             setIsSaving(false);
         }
     };
@@ -914,14 +919,6 @@ export default function Paso2Page() {
                     <button
                         onClick={async () => {
                             setIsSaving(true);
-
-                            // Safety: force redirect after 2s no matter what
-                            const fallback = setTimeout(() => {
-                                setIsSaving(false);
-                                console.warn('[GuardarYVolver] Timeout — forcing redirect');
-                                window.location.assign('/mis-inmuebles');
-                            }, 2000);
-
                             try {
                                 const { error: saveErr } = await supabase.from('inmuebles').update(getFormPayload()).eq('id', propertyId);
                                 if (saveErr) {
@@ -930,11 +927,11 @@ export default function Paso2Page() {
                             } catch (e) {
                                 console.warn('Auto-save on exit exception:', e);
                             }
-
-                            clearTimeout(fallback);
                             setIsSaving(false);
-                            // FORCED NAVIGATION
-                            window.location.assign('/mis-inmuebles');
+                            // Navigate after state released
+                            setTimeout(() => {
+                                window.location.href = '/mis-inmuebles';
+                            }, 100);
                         }}
                         disabled={isSaving}
                         className="flex gap-2 items-center text-slate-600 hover:text-blue-600 transition-colors disabled:opacity-50"

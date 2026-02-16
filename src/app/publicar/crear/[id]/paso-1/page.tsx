@@ -305,97 +305,144 @@ export default function Paso1Page() {
     }, [propertyId]);
 
     // ═══════════════════════════════════════════════════════════════
-    // AUTOCOMPLETE SETUP — Flow A: Input → Map
+    // AUTOCOMPLETE — useCallback initializer (called from two places)
     // ═══════════════════════════════════════════════════════════════
-    useEffect(() => {
-        if (!isMapLoaded || !searchInputRef.current) return;
+    const initAutocomplete = useCallback(() => {
+        // Already attached? Skip.
         if (autocompleteRef.current) return;
 
-        // Polling — wait for Google Places to be fully available
-        const pollInterval = setInterval(() => {
-            if (!window.google?.maps?.places) {
-                console.log('[Autocomplete] Waiting for Places library...');
-                return;
-            }
-            clearInterval(pollInterval);
+        // Guard: input must exist
+        const input = searchInputRef.current;
+        if (!input) {
+            console.warn('[Autocomplete] searchInputRef.current is null — skipping');
+            return;
+        }
 
-            if (!searchInputRef.current || autocompleteRef.current) return;
+        // Guard: Places library must be loaded
+        if (!window.google?.maps?.places) {
+            console.warn('[Autocomplete] google.maps.places not available yet');
+            return;
+        }
 
-            try {
-                const autocomplete = new window.google.maps.places.Autocomplete(searchInputRef.current, {
-                    componentRestrictions: { country: 'co' },
-                    fields: ['geometry', 'formatted_address', 'name', 'address_components'],
-                    types: ['geocode', 'establishment'],
-                });
+        try {
+            const autocomplete = new window.google.maps.places.Autocomplete(input, {
+                componentRestrictions: { country: 'co' },
+                fields: ['geometry', 'formatted_address', 'name', 'address_components'],
+                types: ['geocode', 'establishment'],
+            });
 
-                autocomplete.addListener('place_changed', () => {
-                    const place = autocomplete.getPlace();
-                    if (place.geometry?.location) {
-                        const newLat = place.geometry.location.lat();
-                        const newLng = place.geometry.location.lng();
-                        const newPos = { lat: newLat, lng: newLng };
+            autocomplete.addListener('place_changed', () => {
+                const place = autocomplete.getPlace();
+                if (place.geometry?.location) {
+                    const newLat = place.geometry.location.lat();
+                    const newLng = place.geometry.location.lng();
+                    const newPos = { lat: newLat, lng: newLng };
 
-                        setMarkerPosition(newPos);
-                        setMapCenter(newPos);
-                        setLatitud(newLat);
-                        setLongitud(newLng);
-                        setPinPlaced(true);
+                    setMarkerPosition(newPos);
+                    setMapCenter(newPos);
+                    setLatitud(newLat);
+                    setLongitud(newLng);
+                    setPinPlaced(true);
 
-                        if (mapInstanceRef.current) {
-                            mapInstanceRef.current.panTo(newPos);
-                            mapInstanceRef.current.setZoom(17);
-                        }
-
-                        if (place.address_components) {
-                            const parsed = formatAddress(place.address_components, place.name);
-
-                            setDireccionFormateada(parsed.formatted);
-                            if (searchInputRef.current) {
-                                searchInputRef.current.value = parsed.formatted;
-                            }
-
-                            if (parsed.route && parsed.streetNumber) {
-                                setAddress(`${parsed.route} #${parsed.streetNumber}`);
-                            } else if (parsed.route) {
-                                setAddress(parsed.route);
-                            }
-
-                            const barrio = parsed.neighborhood || parsed.sublocality;
-                            if (barrio) {
-                                setNeighborhood(prev => prev.trim() ? prev : barrio);
-                                if (parsed.sublocality) {
-                                    setSubdivision(parsed.sublocality);
-                                }
-                            }
-
-                            if (parsed.city) {
-                                const matchedCity = ALL_CITIES.find(c =>
-                                    parsed.city.toLowerCase().includes(c.toLowerCase()) ||
-                                    c.toLowerCase().includes(parsed.city.toLowerCase())
-                                );
-                                setCiudad(matchedCity || parsed.city);
-                            }
-
-                            console.log('[Autocomplete] formatAddress →', parsed.formatted);
-                        }
-
-                        if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-                        debounceTimerRef.current = setTimeout(() => {
-                            reverseGeocode(newLat, newLng);
-                        }, 3000);
+                    if (mapInstanceRef.current) {
+                        mapInstanceRef.current.panTo(newPos);
+                        mapInstanceRef.current.setZoom(17);
                     }
-                });
 
-                autocompleteRef.current = autocomplete;
-                console.log('[Autocomplete] ATTACHED');
-            } catch (err) {
-                console.error('[Autocomplete] Failed to initialize:', err);
+                    if (place.address_components) {
+                        const parsed = formatAddress(place.address_components, place.name);
+
+                        setDireccionFormateada(parsed.formatted);
+                        if (searchInputRef.current) {
+                            searchInputRef.current.value = parsed.formatted;
+                        }
+
+                        if (parsed.route && parsed.streetNumber) {
+                            setAddress(`${parsed.route} #${parsed.streetNumber}`);
+                        } else if (parsed.route) {
+                            setAddress(parsed.route);
+                        }
+
+                        const barrio = parsed.neighborhood || parsed.sublocality;
+                        if (barrio) {
+                            setNeighborhood(prev => prev.trim() ? prev : barrio);
+                        }
+                        // Always persist sublocality as subdivision
+                        if (parsed.sublocality) {
+                            setSubdivision(parsed.sublocality);
+                        }
+
+                        if (parsed.city) {
+                            const matchedCity = ALL_CITIES.find(c =>
+                                parsed.city.toLowerCase().includes(c.toLowerCase()) ||
+                                c.toLowerCase().includes(parsed.city.toLowerCase())
+                            );
+                            setCiudad(matchedCity || parsed.city);
+                        }
+
+                        console.log('[Autocomplete] formatAddress →', parsed.formatted);
+                    }
+
+                    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+                    debounceTimerRef.current = setTimeout(() => {
+                        reverseGeocode(newLat, newLng);
+                    }, 3000);
+                }
+            });
+
+            autocompleteRef.current = autocomplete;
+            console.log('[Autocomplete] ATTACHED');
+        } catch (err) {
+            console.error('[Autocomplete] Failed to initialize:', err);
+        }
+    }, []);
+
+    // Trigger 1: When Google Maps finishes loading
+    useEffect(() => {
+        if (isMapLoaded) {
+            initAutocomplete();
+        }
+    }, [isMapLoaded, initAutocomplete]);
+
+    // Trigger 2: When loading finishes (input ref becomes available in DOM)
+    useEffect(() => {
+        if (!isLoading && isMapLoaded) {
+            // Small delay to ensure DOM has rendered the input
+            const timer = setTimeout(() => initAutocomplete(), 200);
+            return () => clearTimeout(timer);
+        }
+    }, [isLoading, isMapLoaded, initAutocomplete]);
+
+    // ═══════════════════════════════════════════════════════════════
+    // PAC-CONTAINER STYLE INJECTION (ensures autocomplete dropdown is visible)
+    // ═══════════════════════════════════════════════════════════════
+    useEffect(() => {
+        const styleId = 'pac-container-fix';
+        if (document.getElementById(styleId)) return;
+
+        const style = document.createElement('style');
+        style.id = styleId;
+        style.textContent = `
+            .pac-container {
+                z-index: 99999 !important;
+                background-color: #fff !important;
+                border: 1px solid #e2e8f0 !important;
+                border-radius: 8px !important;
+                box-shadow: 0 10px 25px rgba(0,0,0,0.15) !important;
+                margin-top: 4px !important;
+                font-family: Lufga, Inter, sans-serif !important;
             }
-        }, 500);
-
-        // Cleanup: stop polling on unmount
-        return () => clearInterval(pollInterval);
-    }, [isMapLoaded]);
+            .pac-item {
+                padding: 8px 12px !important;
+                cursor: pointer !important;
+                font-size: 14px !important;
+            }
+            .pac-item:hover {
+                background-color: #f1f5f9 !important;
+            }
+        `;
+        document.head.appendChild(style);
+    }, []);
 
     // ═══════════════════════════════════════════════════════════════
     // Reactive panTo effect — moves map when mapCenter changes
@@ -537,7 +584,7 @@ export default function Paso1Page() {
         setIsSaving(true);
 
         try {
-            // Save location (subdivision explicitly passed)
+            // Save location (id, address, neighborhood, subdivision, lat, lng, city, formattedAddress)
             const locationResult = await updatePropertyLocation(
                 propertyId,
                 address.trim(),
@@ -576,9 +623,13 @@ export default function Paso1Page() {
                 );
             }
 
-            // FORCED NAVIGATION — bypass React router entirely
             console.log('[handleContinue] ✅ Saves complete. Navigating to paso-2...');
-            window.location.assign(`/publicar/crear/${propertyId}/paso-2`);
+            setIsSaving(false);
+
+            // Navigate: use window.location.href after state is released
+            setTimeout(() => {
+                window.location.href = `/publicar/crear/${propertyId}/paso-2`;
+            }, 100);
 
         } catch (err: any) {
             console.error('Save error:', err);
@@ -593,13 +644,6 @@ export default function Paso1Page() {
     const handleSaveAndExit = async () => {
         setError(null);
         setIsSavingAndExit(true);
-
-        // Safety: force-kill spinner after 2s no matter what
-        const spinnerTimeout = setTimeout(() => {
-            setIsSavingAndExit(false);
-            console.warn('[SaveAndExit] Spinner timeout — forcing redirect');
-            window.location.assign('/mis-inmuebles');
-        }, 2000);
 
         try {
             const hasLocationData = latitud !== null || longitud !== null || address.trim() || ciudad;
@@ -647,15 +691,15 @@ export default function Paso1Page() {
                 );
             }
 
-            clearTimeout(spinnerTimeout);
+            console.log('[SaveAndExit] ✅ Saves complete. Redirecting...');
             setIsSavingAndExit(false);
 
-            // FORCED NAVIGATION
-            console.log('[SaveAndExit] ✅ Saves complete. Redirecting...');
-            window.location.assign('/mis-inmuebles');
+            // Navigate: use window.location.href after state is released
+            setTimeout(() => {
+                window.location.href = '/mis-inmuebles';
+            }, 100);
 
         } catch (err: any) {
-            clearTimeout(spinnerTimeout);
             console.error('[SaveAndExit] Error:', err);
             setError(err.message || 'Error al guardar. Intenta de nuevo.');
             setIsSavingAndExit(false);
