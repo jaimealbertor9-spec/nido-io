@@ -374,18 +374,22 @@ export default function Paso2Page() {
     // ═══════════════════════════════════════════════════════════════
     // COLLECT ALL FORM DATA FOR SAVING
     // ═══════════════════════════════════════════════════════════════
-    const getFormPayload = () => ({
-        titulo: title,
-        descripcion: description,
-        precio: parseInt(price) || 0,
-        tipo_negocio: offerType,
-        telefono_llamadas: telefono || null,
-        whatsapp: whatsapp || null,
-        administracion: adminFee ? parseInt(adminFee) : null,
-        video_url: videoUrl.trim() || null,
-        video_file: videoFile || null,
-        updated_at: new Date().toISOString()
-    });
+    const getFormPayload = () => {
+        const payload = {
+            titulo: title,
+            descripcion: description,
+            precio: parseInt(price) || 0,
+            tipo_negocio: offerType,
+            telefono_llamadas: telefono || null,
+            whatsapp: whatsapp || null,
+            administracion: adminFee ? parseInt(adminFee) : null,
+            video_url: videoUrl.trim() || null,
+            video_file: videoFile || null,
+            updated_at: new Date().toISOString()
+        };
+        console.log('DEBUG: getFormPayload() =>', JSON.stringify(payload, null, 2));
+        return payload;
+    };
 
     // ═══════════════════════════════════════════════════════════════
     // PAYMENT HANDLER
@@ -444,8 +448,17 @@ export default function Paso2Page() {
     // ═══════════════════════════════════════════════════════════════
     const handleUpdateOnly = async () => {
         console.log('💾 [EditMode] Starting save process without payment...');
+        console.log('[Step 2] Saving video_url:', videoUrl);
+        console.log('DEBUG: Final videoUrl to save:', videoUrl);
         setIsSaving(true);
         setError(null);
+
+        // Safety: force redirect after 5s if the spinner gets stuck
+        const safetyTimer = setTimeout(() => {
+            console.warn('[EditMode] 5s safety timeout — forcing redirect');
+            setIsSaving(false);
+            window.location.href = '/mis-inmuebles';
+        }, 5000);
 
         try {
             const { error: updateError } = await supabase
@@ -455,6 +468,7 @@ export default function Paso2Page() {
 
             if (updateError) throw new Error(`Error guardando cambios: ${updateError.message}`);
 
+            clearTimeout(safetyTimer);
             console.log('✅ [EditMode] Property updated successfully');
             alert('¡Cambios guardados exitosamente!');
             setIsSaving(false);
@@ -463,6 +477,7 @@ export default function Paso2Page() {
             }, 100);
 
         } catch (e: any) {
+            clearTimeout(safetyTimer);
             console.error('❌ [EditMode] Save error:', e);
             setError(e.message || 'Error guardando cambios. Intenta nuevamente.');
             setIsSaving(false);
@@ -918,7 +933,17 @@ export default function Paso2Page() {
                 {inmuebleEstado === 'borrador' ? (
                     <button
                         onClick={async () => {
+                            console.log('[Step 2] Guardar y Volver — Saving video_url:', videoUrl);
+                            console.log('DEBUG: Final videoUrl to save:', videoUrl);
                             setIsSaving(true);
+
+                            // Safety: force redirect after 5s if spinner gets stuck
+                            const safetyTimer = setTimeout(() => {
+                                console.warn('[GuardarYVolver] 5s safety timeout — forcing redirect');
+                                setIsSaving(false);
+                                window.location.href = '/mis-inmuebles';
+                            }, 5000);
+
                             try {
                                 const { error: saveErr } = await supabase.from('inmuebles').update(getFormPayload()).eq('id', propertyId);
                                 if (saveErr) {
@@ -927,6 +952,8 @@ export default function Paso2Page() {
                             } catch (e) {
                                 console.warn('Auto-save on exit exception:', e);
                             }
+
+                            clearTimeout(safetyTimer);
                             setIsSaving(false);
                             // Navigate after state released
                             setTimeout(() => {
