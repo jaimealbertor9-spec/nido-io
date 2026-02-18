@@ -96,6 +96,10 @@ export default function Paso2Page() {
         tipo_inmueble: null, area_m2: null, barrio: null, direccion: null
     });
 
+    // Room counts for dynamic photo grid
+    const [habitaciones, setHabitaciones] = useState<number>(0);
+    const [banos, setBanos] = useState<number>(0);
+
     // Video States
     const [videoUrl, setVideoUrl] = useState('');
     const [videoFile, setVideoFile] = useState('');    // Storage path
@@ -161,6 +165,8 @@ export default function Paso2Page() {
                     setTelefono(propData.telefono_llamadas ?? '');
                     setWhatsapp(propData.whatsapp ?? '');
                     setInmuebleEstado(propData.estado ?? 'borrador');
+                    setHabitaciones((propData as any).habitaciones ?? 0);
+                    setBanos((propData as any).banos ?? 0);
                     setStep1Data({
                         tipo_inmueble: propData.tipo_inmueble ?? null,
                         area_m2: propData.area_m2 ?? null,
@@ -627,7 +633,7 @@ export default function Paso2Page() {
 
             {/* SECCIÓN 1: FOTOS */}
             <section className="bg-white border border-gray-200 rounded-md p-6">
-                <StepFotos inmuebleId={propertyId} onNext={() => setPhotosCompleted(true)} />
+                <StepFotos inmuebleId={propertyId} habitaciones={habitaciones} banos={banos} onNext={() => setPhotosCompleted(true)} />
             </section>
 
             {/* ═══════════════════════════════════════════════════════════════ */}

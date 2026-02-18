@@ -1,40 +1,127 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { uploadPropertyImage, deletePropertyImage, getPropertyImages } from '@/app/actions/uploadImages'
 import Image from 'next/image'
-import { Trash2, Loader2 } from 'lucide-react'
+import { Trash2, Loader2, Camera, ImagePlus, Star, Plus, X } from 'lucide-react'
 
-// LISTA DE FOTOS OBLIGATORIAS (EN ORDEN)
-const REQUIRED_PHOTOS = [
-    { id: 'fachada', label: 'Fachada (Frente)' },
-    { id: 'sala', label: 'Sala de Estar' },
-    { id: 'comedor', label: 'Comedor' },
-    { id: 'cocina', label: 'Cocina' },
-    { id: 'bano', label: 'Baño Principal' },
-    { id: 'habitacion', label: 'Habitación Principal' }
+// ═══════════════════════════════════════════════════════════════
+// ANCHOR SLOTS — always visible, fixed positions
+// ═══════════════════════════════════════════════════════════════
+const ANCHOR_SLOTS = [
+    { id: 'fachada', label: 'Fachada (Frente)', weight: 20 },
+    { id: 'cocina', label: 'Cocina', weight: 20 },
+    { id: 'sala', label: 'Sala de Estar', weight: 10 },
+    { id: 'comedor', label: 'Comedor', weight: 10 },
 ]
+// Anchor total = 60%
 
-// LISTA DE FOTOS OPCIONALES
-const OPTIONAL_PHOTOS = [
-    { id: 'garaje', label: 'Garaje' },
-    { id: 'patio', label: 'Patio / Balcón' },
-    { id: 'otros', label: 'Zonas Comunes (Piscina, etc)' }
-]
-
-interface UploadedImage {
-    url: string;
-    imageId?: string;
+// ═══════════════════════════════════════════════════════════════
+// LEGACY TAG MAPPING
+// ═══════════════════════════════════════════════════════════════
+const LEGACY_TAG_MAP: Record<string, string> = {
+    'bano': 'bano_1',
+    'habitacion': 'habitacion_1',
 }
 
-export default function StepFotos({ inmuebleId, onNext }: { inmuebleId: string, onNext: () => void }) {
+// ═══════════════════════════════════════════════════════════════
+// TYPES
+// ═══════════════════════════════════════════════════════════════
+interface Slot {
+    id: string
+    label: string
+    weight: number
+}
+
+interface UploadedImage {
+    url: string
+    imageId?: string
+}
+
+interface StepFotosProps {
+    inmuebleId: string
+    habitaciones?: number
+    banos?: number
+    onNext: () => void
+}
+
+// ═══════════════════════════════════════════════════════════════
+// COMPONENT
+// ═══════════════════════════════════════════════════════════════
+export default function StepFotos({ inmuebleId, habitaciones = 0, banos = 0, onNext }: StepFotosProps) {
     const [uploadedPhotos, setUploadedPhotos] = useState<Record<string, UploadedImage>>({})
-    const [uploading, setUploading] = useState(false)
+    const [uploadingSlot, setUploadingSlot] = useState<string | null>(null)
     const [deletingSlot, setDeletingSlot] = useState<string | null>(null)
     const [isLoading, setIsLoading] = useState(true)
+    const [uploadError, setUploadError] = useState<string | null>(null)
+
+    // Extras state
+    const [extraPhotos, setExtraPhotos] = useState<{ tag: string; url: string; imageId?: string }[]>([])
+    const [nextExtraIndex, setNextExtraIndex] = useState(1)
+    const [isUploadingExtra, setIsUploadingExtra] = useState(false)
+    const extrasScrollRef = useRef<HTMLDivElement>(null)
+
+    // ── Dynamic slot generation ──
+    const numHabitaciones = Math.max(habitaciones, 1)
+    const numBanos = Math.max(banos, 1)
+
+    const allScoredSlots: Slot[] = useMemo(() => {
+        const dynamicCount = numHabitaciones + numBanos
+        const anchorTotalWeight = 60 // fixed
+        const remainingWeight = 100 - anchorTotalWeight // 40
+        const perDynamicWeight = dynamicCount > 0 ? remainingWeight / dynamicCount : 0
+
+        const bedroomSlots: Slot[] = Array.from({ length: numHabitaciones }, (_, i) => ({
+            id: `habitacion_${i + 1}`,
+            label: numHabitaciones === 1 ? 'Habitación Principal' : `Habitación ${i + 1}`,
+            weight: perDynamicWeight,
+        }))
+
+        const bathroomSlots: Slot[] = Array.from({ length: numBanos }, (_, i) => ({
+            id: `bano_${i + 1}`,
+            label: numBanos === 1 ? 'Baño Principal' : `Baño ${i + 1}`,
+            weight: perDynamicWeight,
+        }))
+
+        return [
+            ...ANCHOR_SLOTS.map(s => ({ ...s })),
+            ...bedroomSlots,
+            ...bathroomSlots,
+        ]
+    }, [numHabitaciones, numBanos])
+
+    // All known slot IDs (for hydration matching)
+    const allSlotIds = useMemo(() => {
+        return allScoredSlots.map(s => s.id)
+    }, [allScoredSlots])
 
     // ═══════════════════════════════════════════════════════════════
-    // FETCH EXISTING IMAGES ON MOUNT (Hydration)
+    // QUALITY SCORE (0-100%)
+    // ═══════════════════════════════════════════════════════════════
+    const qualityScore = useMemo(() => {
+        let score = 0
+        for (const slot of allScoredSlots) {
+            if (uploadedPhotos[slot.id]) {
+                score += slot.weight
+            }
+        }
+        return Math.round(Math.min(score, 100))
+    }, [allScoredSlots, uploadedPhotos])
+
+    const qualityColor = qualityScore >= 80
+        ? 'bg-green-500' : qualityScore >= 50
+            ? 'bg-amber-500' : 'bg-red-400'
+
+    const qualityTextColor = qualityScore >= 80
+        ? 'text-green-700' : qualityScore >= 50
+            ? 'text-amber-700' : 'text-red-600'
+
+    const qualityLabel = qualityScore >= 80
+        ? '¡Excelente!' : qualityScore >= 50
+            ? 'Buen avance' : 'Incompleto'
+
+    // ═══════════════════════════════════════════════════════════════
+    // HYDRATION: Load existing images on mount
     // ═══════════════════════════════════════════════════════════════
     useEffect(() => {
         const loadExistingImages = async () => {
@@ -46,26 +133,43 @@ export default function StepFotos({ inmuebleId, onNext }: { inmuebleId: string, 
             try {
                 const existingImages = await getPropertyImages(inmuebleId)
 
-                // Convert array to Record<category, UploadedImage>
-                // Use case-insensitive matching for category comparison
                 const hydrated: Record<string, UploadedImage> = {}
+                const hydratedExtras: { tag: string; url: string; imageId?: string }[] = []
+                let maxExtraIndex = 0
+
                 for (const img of existingImages) {
-                    // Get category from DB (may be stored with different casing)
-                    const dbCategory = (img.category || '').toLowerCase().trim()
+                    let dbCategory = (img.category || '').toLowerCase().trim()
 
-                    // Find matching UI category using case-insensitive comparison
-                    const allCategories = [...REQUIRED_PHOTOS, ...OPTIONAL_PHOTOS]
-                    const matchedCategory = allCategories.find(p => p.id.toLowerCase() === dbCategory)
+                    // Apply legacy tag mapping
+                    if (LEGACY_TAG_MAP[dbCategory]) {
+                        dbCategory = LEGACY_TAG_MAP[dbCategory]
+                    }
 
-                    if (matchedCategory && img.url) {
-                        hydrated[matchedCategory.id] = {
+                    // Check if it's an extra
+                    const extraMatch = dbCategory.match(/^extra_(\d+)$/)
+                    if (extraMatch) {
+                        const idx = parseInt(extraMatch[1], 10)
+                        if (idx > maxExtraIndex) maxExtraIndex = idx
+                        hydratedExtras.push({
+                            tag: dbCategory,
                             url: img.url,
-                            imageId: img.id
+                            imageId: img.id,
+                        })
+                        continue
+                    }
+
+                    // Match against scored slots
+                    if (allSlotIds.includes(dbCategory) && img.url) {
+                        hydrated[dbCategory] = {
+                            url: img.url,
+                            imageId: img.id,
                         }
                     }
                 }
 
                 setUploadedPhotos(hydrated)
+                setExtraPhotos(hydratedExtras)
+                setNextExtraIndex(maxExtraIndex + 1)
             } catch (err) {
                 console.error('[StepFotos] Error loading existing images:', err)
             } finally {
@@ -74,52 +178,61 @@ export default function StepFotos({ inmuebleId, onNext }: { inmuebleId: string, 
         }
 
         loadExistingImages()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [inmuebleId])
 
-    // Helper function for case-insensitive category lookup
-    const hasUploadedPhoto = (categoryId: string): boolean => {
-        return !!uploadedPhotos[categoryId]
-    }
-
-    // Calculate which required photos are still needed
-    const uploadedRequiredIds = REQUIRED_PHOTOS.filter(p => hasUploadedPhoto(p.id)).map(p => p.id)
-    const nextRequiredPhoto = REQUIRED_PHOTOS.find(p => !hasUploadedPhoto(p.id))
-    const isFinishedRequired = uploadedRequiredIds.length >= REQUIRED_PHOTOS.length
-
-    // Notify parent when all required photos are done (but only after initial load)
+    // Notify parent when quality hits 100%
     useEffect(() => {
-        if (!isLoading && isFinishedRequired) {
+        if (!isLoading && qualityScore >= 100) {
             onNext()
         }
-    }, [isLoading, isFinishedRequired, onNext])
+    }, [isLoading, qualityScore, onNext])
 
-    // Progress based on how many required photos are uploaded
-    const progress = (uploadedRequiredIds.length / REQUIRED_PHOTOS.length) * 100
+    // Auto-dismiss upload error after 5s
+    useEffect(() => {
+        if (uploadError) {
+            const timer = setTimeout(() => setUploadError(null), 5000)
+            return () => clearTimeout(timer)
+        }
+    }, [uploadError])
 
+    // ═══════════════════════════════════════════════════════════════
+    // UPLOAD HANDLER (Scored Slots)
+    // ═══════════════════════════════════════════════════════════════
     const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>, category: string) => {
         if (!e.target.files?.[0]) return
-        setUploading(true)
+        setUploadingSlot(category)
+        setUploadError(null)
 
-        const formData = new FormData()
-        formData.append('file', e.target.files[0])
-        formData.append('inmuebleId', inmuebleId)
-        formData.append('category', category)
+        try {
+            const formData = new FormData()
+            formData.append('file', e.target.files[0])
+            formData.append('inmuebleId', inmuebleId)
+            formData.append('category', category)
 
-        const result = await uploadPropertyImage(formData)
+            const result = await uploadPropertyImage(formData)
 
-        if (result.success) {
-            setUploadedPhotos(prev => ({
-                ...prev,
-                [category]: { url: result.url!, imageId: result.imageId }
-            }))
-        } else {
-            alert('Error: ' + result.error)
+            if (result.success) {
+                setUploadedPhotos(prev => ({
+                    ...prev,
+                    [category]: { url: result.url!, imageId: result.imageId },
+                }))
+            } else {
+                console.error('[StepFotos] Upload failed:', result.error)
+                setUploadError(`Error al subir foto: ${result.error}`)
+            }
+        } catch (err: any) {
+            console.error('[StepFotos] Upload exception:', err)
+            setUploadError(`Error inesperado al subir foto: ${err.message || 'Intenta de nuevo'}`)
+        } finally {
+            setUploadingSlot(null)
         }
-        setUploading(false)
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // DELETE HANDLER (Scored Slots)
+    // ═══════════════════════════════════════════════════════════════
     const handleRemoveImage = async (slotId: string, e: React.MouseEvent) => {
-        // Prevent triggering any parent click handlers
         e.stopPropagation()
         e.preventDefault()
 
@@ -129,12 +242,9 @@ export default function StepFotos({ inmuebleId, onNext }: { inmuebleId: string, 
         setDeletingSlot(slotId)
 
         try {
-            // If we have an imageId, delete from database/storage
             if (image.imageId) {
                 await deletePropertyImage(image.imageId)
             }
-
-            // Clear from local state - this will re-render the upload input
             setUploadedPhotos(prev => {
                 const updated = { ...prev }
                 delete updated[slotId]
@@ -142,13 +252,134 @@ export default function StepFotos({ inmuebleId, onNext }: { inmuebleId: string, 
             })
         } catch (err) {
             console.error('Error removing image:', err)
-            alert('Error al eliminar la imagen')
+            setUploadError('Error al eliminar la imagen')
         } finally {
             setDeletingSlot(null)
         }
     }
 
-    // Show loading state while fetching existing images
+    // ═══════════════════════════════════════════════════════════════
+    // EXTRAS: Upload & Delete
+    // ═══════════════════════════════════════════════════════════════
+    const handleUploadExtra = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!e.target.files?.[0]) return
+        setIsUploadingExtra(true)
+        setUploadError(null)
+
+        const tag = `extra_${nextExtraIndex}`
+
+        try {
+            const formData = new FormData()
+            formData.append('file', e.target.files[0])
+            formData.append('inmuebleId', inmuebleId)
+            formData.append('category', tag)
+
+            const result = await uploadPropertyImage(formData)
+
+            if (result.success) {
+                setExtraPhotos(prev => [...prev, { tag, url: result.url!, imageId: result.imageId }])
+                setNextExtraIndex(prev => prev + 1)
+
+                // Scroll to end after adding
+                setTimeout(() => {
+                    extrasScrollRef.current?.scrollTo({
+                        left: extrasScrollRef.current.scrollWidth,
+                        behavior: 'smooth',
+                    })
+                }, 100)
+            } else {
+                console.error('[StepFotos] Extra upload failed:', result.error)
+                setUploadError(`Error al subir foto extra: ${result.error}`)
+            }
+        } catch (err: any) {
+            console.error('[StepFotos] Extra upload exception:', err)
+            setUploadError(`Error inesperado: ${err.message || 'Intenta de nuevo'}`)
+        } finally {
+            setIsUploadingExtra(false)
+        }
+    }
+
+    const handleRemoveExtra = async (tag: string, imageId?: string, e?: React.MouseEvent) => {
+        e?.stopPropagation()
+        e?.preventDefault()
+        setDeletingSlot(tag)
+
+        try {
+            if (imageId) {
+                await deletePropertyImage(imageId)
+            }
+            setExtraPhotos(prev => prev.filter(p => p.tag !== tag))
+        } catch (err) {
+            console.error('Error removing extra:', err)
+            setUploadError('Error al eliminar la foto extra')
+        } finally {
+            setDeletingSlot(null)
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // RENDER: Slot Card
+    // ═══════════════════════════════════════════════════════════════
+    const renderSlotCard = (slot: { id: string; label: string }) => {
+        const image = uploadedPhotos[slot.id]
+        const isUploading = uploadingSlot === slot.id
+        const isDeleting = deletingSlot === slot.id
+
+        return (
+            <div key={slot.id} className="group relative aspect-[4/3] rounded-xl overflow-hidden border-2 border-gray-200 bg-white shadow-sm transition-all hover:shadow-md">
+                {image ? (
+                    <>
+                        <Image src={image.url} alt={slot.label} fill className="object-cover" />
+
+                        {/* Gradient + label */}
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-3 pt-8">
+                            <p className="text-white text-xs font-medium text-center truncate">{slot.label}</p>
+                        </div>
+
+                        {/* Green check */}
+                        <div className="absolute top-2 left-2 bg-green-500 text-white rounded-full p-1 w-6 h-6 flex items-center justify-center text-xs shadow">
+                            ✓
+                        </div>
+
+                        {/* Delete button */}
+                        <button
+                            type="button"
+                            onClick={(e) => handleRemoveImage(slot.id, e)}
+                            disabled={isDeleting}
+                            className="absolute top-2 right-2 z-10 bg-red-500 hover:bg-red-600 text-white rounded-full p-1.5 w-8 h-8 flex items-center justify-center shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Eliminar imagen"
+                        >
+                            {isDeleting ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                                <Trash2 className="w-4 h-4" />
+                            )}
+                        </button>
+                    </>
+                ) : (
+                    <label className="flex flex-col items-center justify-center w-full h-full cursor-pointer border-2 border-dashed border-gray-300 rounded-xl hover:border-blue-400 hover:bg-blue-50/50 transition-colors">
+                        {isUploading ? (
+                            <Loader2 className="w-8 h-8 text-blue-500 animate-spin mb-2" />
+                        ) : (
+                            <Camera className="w-8 h-8 text-gray-400 mb-2" />
+                        )}
+                        <span className="text-sm font-medium text-gray-600 text-center px-2">{slot.label}</span>
+                        <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            disabled={isUploading}
+                            onChange={(e) => handleUpload(e, slot.id)}
+                        />
+                    </label>
+                )}
+            </div>
+        )
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // LOADING STATE
+    // ═══════════════════════════════════════════════════════════════
     if (isLoading) {
         return (
             <div className="space-y-8">
@@ -163,99 +394,145 @@ export default function StepFotos({ inmuebleId, onNext }: { inmuebleId: string, 
         )
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // MAIN RENDER
+    // ═══════════════════════════════════════════════════════════════
     return (
         <div className="space-y-8">
+            {/* ── Header ── */}
             <div>
                 <h2 className="text-2xl font-bold text-gray-900">Fotografías del Inmueble</h2>
-                <p className="text-gray-500">Sube las fotos en orden para completar tu anuncio.</p>
+                <p className="text-gray-500">
+                    Sube fotos de cada espacio para mejorar tu anuncio. Todas son opcionales.
+                </p>
             </div>
 
-            {/* Barra de Progreso */}
-            <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
-                <div
-                    className="bg-green-500 h-full transition-all duration-500 ease-out"
-                    style={{ width: `${Math.min(progress, 100)}%` }}
-                ></div>
-            </div>
-
-            {/* ZONA DE CARGA ACTIVA */}
-            <div className={`border-2 border-dashed rounded-xl p-10 text-center transition-colors ${isFinishedRequired ? 'border-green-300 bg-green-50' : 'border-blue-300 bg-blue-50'}`}>
-                {!isFinishedRequired && nextRequiredPhoto ? (
-                    <div>
-                        <p className="text-sm font-semibold text-blue-600 uppercase tracking-wide mb-2">Siguiente Foto Requerida</p>
-                        <h3 className="text-3xl font-extrabold text-gray-800 mb-6">{nextRequiredPhoto.label}</h3>
-
-                        <label className={`inline-flex items-center gap-2 px-8 py-4 rounded-full text-white font-bold text-lg cursor-pointer transition shadow-lg ${uploading ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700 hover:scale-105'}`}>
-                            {uploading ? 'Subiendo...' : '📸 Tomar / Subir Foto'}
-                            <input type="file" accept="image/*" className="hidden" disabled={uploading} onChange={(e) => handleUpload(e, nextRequiredPhoto.id)} />
-                        </label>
-                    </div>
-                ) : (
-                    <div>
-                        <h3 className="text-2xl font-bold text-green-700 mb-2">✅ ¡Fotos Obligatorias Listas!</h3>
-                        <p className="text-gray-600 mb-6">Puedes agregar fotos extra si quieres, o continuar al siguiente paso.</p>
-
-                        <div className="flex flex-wrap justify-center gap-3">
-                            {OPTIONAL_PHOTOS.filter(opt => !uploadedPhotos[opt.id]).map(opt => (
-                                <label key={opt.id} className="cursor-pointer bg-white border border-gray-200 shadow-sm px-4 py-2 rounded-lg hover:bg-gray-50 text-sm font-medium text-gray-700 flex items-center gap-2">
-                                    <span>+</span> {opt.label}
-                                    <input type="file" accept="image/*" className="hidden" onChange={(e) => handleUpload(e, opt.id)} />
-                                </label>
-                            ))}
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            {/* GALERÍA DE MINIATURAS CON BOTÓN ELIMINAR */}
-            {Object.keys(uploadedPhotos).length > 0 && (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8">
-                    {Object.entries(uploadedPhotos).map(([catId, imageData]) => {
-                        const label = [...REQUIRED_PHOTOS, ...OPTIONAL_PHOTOS].find(p => p.id === catId)?.label || catId
-                        const isDeleting = deletingSlot === catId
-
-                        return (
-                            <div key={catId} className="group relative aspect-square rounded-xl overflow-hidden border border-gray-200 shadow-sm">
-                                {imageData.url ? (
-                                    <Image src={imageData.url} alt={label} fill className="object-cover" />
-                                ) : (
-                                    <div className="w-full h-full bg-gray-200 flex items-center justify-center">
-                                        <span className="text-gray-400">Sin imagen</span>
-                                    </div>
-                                )}
-
-                                {/* Gradient overlay with label */}
-                                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-3 pt-8">
-                                    <p className="text-white text-xs font-medium text-center truncate">{label}</p>
-                                </div>
-
-                                {/* Delete button - appears on hover or always on mobile */}
-                                <button
-                                    type="button"
-                                    onClick={(e) => handleRemoveImage(catId, e)}
-                                    disabled={isDeleting}
-                                    className="absolute top-2 right-2 z-10 bg-red-500 hover:bg-red-600 text-white rounded-full p-1.5 w-8 h-8 flex items-center justify-center shadow-lg opacity-0 group-hover:opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                                    title="Eliminar imagen"
-                                >
-                                    {isDeleting ? (
-                                        <span className="animate-spin text-xs">⏳</span>
-                                    ) : (
-                                        <Trash2 className="w-4 h-4" />
-                                    )}
-                                </button>
-
-                                {/* Check mark - bottom left to not overlap with delete */}
-                                <div className="absolute top-2 left-2 bg-green-500 text-white rounded-full p-1 w-6 h-6 flex items-center justify-center text-xs shadow">
-                                    ✓
-                                </div>
-                            </div>
-                        )
-                    })}
+            {/* ── Error Alert ── */}
+            {uploadError && (
+                <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                    <span>{uploadError}</span>
+                    <button
+                        type="button"
+                        onClick={() => setUploadError(null)}
+                        className="ml-3 text-red-500 hover:text-red-700"
+                    >
+                        <X className="w-4 h-4" />
+                    </button>
                 </div>
             )}
 
-            {/* NOTE: Removed the "Continuar al Siguiente Paso" button. 
-                User now scrolls naturally to the Price/Offer section below. */}
+            {/* ── Quality Score Bar ── */}
+            <div className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                        <Star className="w-5 h-5 text-amber-500" />
+                        <span className="text-sm font-bold text-gray-800">Puntaje de Calidad del Anuncio</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className={`text-xs font-bold px-2.5 py-1 rounded-full text-white ${qualityColor}`}>
+                            {qualityScore}%
+                        </span>
+                        <span className={`text-xs font-medium ${qualityTextColor}`}>{qualityLabel}</span>
+                    </div>
+                </div>
+
+                <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
+                    <div
+                        className={`${qualityColor} h-full transition-all duration-700 ease-out rounded-full`}
+                        style={{ width: `${qualityScore}%` }}
+                    />
+                </div>
+
+                <p className="text-xs text-gray-500 mt-3 flex items-center gap-1.5">
+                    <ImagePlus className="w-3.5 h-3.5" />
+                    Inmuebles con fotos completas reciben <strong className="text-gray-700">3x más visitas</strong>
+                </p>
+            </div>
+
+            {/* ── Scored Slots Grid ── */}
+            <div>
+                <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-4">
+                    Espacios del Inmueble
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    {allScoredSlots.map(slot => renderSlotCard(slot))}
+                </div>
+            </div>
+
+            {/* ── Unlimited Extras Carousel ── */}
+            <div>
+                <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                    Otras áreas y amenidades
+                </h3>
+                <p className="text-xs text-gray-400 mb-4">
+                    Garaje, patio, piscina, balcón, zonas comunes… agrega todas las que quieras.
+                </p>
+
+                <div
+                    ref={extrasScrollRef}
+                    className="flex gap-3 overflow-x-auto pb-3 scrollbar-thin scrollbar-thumb-gray-300"
+                    style={{ scrollbarWidth: 'thin' }}
+                >
+                    {/* Existing extras */}
+                    {extraPhotos.map((extra) => {
+                        const isDeleting = deletingSlot === extra.tag
+                        return (
+                            <div
+                                key={extra.tag}
+                                className="group relative flex-shrink-0 w-32 h-32 rounded-xl overflow-hidden border-2 border-gray-200 shadow-sm"
+                            >
+                                <Image src={extra.url} alt={extra.tag} fill className="object-cover" />
+
+                                {/* Label */}
+                                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-2 pt-6">
+                                    <p className="text-white text-[10px] font-medium text-center">
+                                        Extra {extra.tag.replace('extra_', '')}
+                                    </p>
+                                </div>
+
+                                {/* Delete */}
+                                <button
+                                    type="button"
+                                    onClick={(e) => handleRemoveExtra(extra.tag, extra.imageId, e)}
+                                    disabled={isDeleting}
+                                    className="absolute top-1.5 right-1.5 z-10 bg-red-500 hover:bg-red-600 text-white rounded-full w-6 h-6 flex items-center justify-center shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 disabled:opacity-50"
+                                >
+                                    {isDeleting ? (
+                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                    ) : (
+                                        <Trash2 className="w-3 h-3" />
+                                    )}
+                                </button>
+                            </div>
+                        )
+                    })}
+
+                    {/* Add Extra Button */}
+                    <label className="flex-shrink-0 w-32 h-32 flex flex-col items-center justify-center cursor-pointer border-2 border-dashed border-gray-300 rounded-xl hover:border-blue-400 hover:bg-blue-50/50 transition-colors">
+                        {isUploadingExtra ? (
+                            <Loader2 className="w-6 h-6 text-blue-500 animate-spin mb-1" />
+                        ) : (
+                            <Plus className="w-6 h-6 text-gray-400 mb-1" />
+                        )}
+                        <span className="text-xs font-medium text-gray-500">
+                            {isUploadingExtra ? 'Subiendo...' : 'Agregar Foto'}
+                        </span>
+                        <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            disabled={isUploadingExtra}
+                            onChange={handleUploadExtra}
+                        />
+                    </label>
+                </div>
+
+                {extraPhotos.length > 0 && (
+                    <p className="text-xs text-gray-400 mt-2">
+                        ✨ {extraPhotos.length} foto{extraPhotos.length !== 1 ? 's' : ''} extra{extraPhotos.length !== 1 ? 's' : ''} — valor adicional para tu anuncio
+                    </p>
+                )}
+            </div>
         </div>
     )
 }
