@@ -30,7 +30,9 @@ export async function updateListingDetails(
     description: string,
     price: number,
     offerType: 'venta' | 'arriendo' | 'arriendo_dias',
-    keywords?: string[]
+    keywords?: string[],
+    videoUrl?: string | null,
+    videoFile?: string | null
 ): Promise<UpdateListingResult> {
     try {
         // ═══════════════════════════════════════════════════════════════
@@ -97,6 +99,8 @@ export async function updateListingDetails(
                 precio: price,
                 tipo_negocio: offerType,
                 keywords: keywords || [],
+                video_url: videoUrl !== undefined ? (videoUrl?.trim() || null) : undefined,
+                video_file: videoFile !== undefined ? (videoFile || null) : undefined,
                 estado: 'pendiente', // Ready for review/payment
                 updated_at: new Date().toISOString(),
             })

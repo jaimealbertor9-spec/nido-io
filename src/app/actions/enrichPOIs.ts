@@ -8,7 +8,39 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.
 
 const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_SERVER_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
 
+// ═══════════════════════════════════════════════════════════════
+// SMART RADIUS — City Classification
+// ═══════════════════════════════════════════════════════════════
+const CAPITAL_CITIES = [
+    'bogotá', 'medellín', 'cali', 'barranquilla', 'bucaramanga',
+    'pereira', 'manizales', 'armenia', 'ibagué', 'santa marta',
+    'cartagena', 'villavicencio', 'tunja',
+];
+
+const CAPITAL_RADIUS = 400;   // dense urban — 400m
+const DEFAULT_RADIUS = 250;   // smaller municipalities — 250m
+const FALLBACK_RADIUS = 450;  // retry if results < 3
+const MIN_POI_THRESHOLD = 3;  // minimum POIs before triggering fallback
+
+function getSmartRadius(city: string): number {
+    const normalized = city
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+
+    const isCapital = CAPITAL_CITIES.some(c => {
+        const norm = c.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        return normalized.includes(norm) || norm.includes(normalized);
+    });
+
+    const radius = isCapital ? CAPITAL_RADIUS : DEFAULT_RADIUS;
+    console.log(`[enrichPOIs] City: "${city}" → Normalized: "${normalized}" → Capital: ${isCapital} → Radius: ${radius}m`);
+    return radius;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // 8 POI categories for the AI Resident Brain
+// ═══════════════════════════════════════════════════════════════
 const POI_CATEGORIES: { key: string; label: string; types: string[] }[] = [
     { key: 'parques', label: 'Parques', types: ['park'] },
     { key: 'educacion', label: 'Educación', types: ['school', 'university'] },
@@ -20,7 +52,6 @@ const POI_CATEGORIES: { key: string; label: string; types: string[] }[] = [
     { key: 'centros_comerciales', label: 'Centros Comerciales', types: ['shopping_mall'] },
 ];
 
-const SEARCH_RADIUS = 400; // meters
 const MAX_RESULTS_PER_CATEGORY = 5;
 
 interface POIResult {
@@ -46,9 +77,10 @@ function haversineDistance(lat1: number, lng1: number, lat2: number, lng2: numbe
 async function searchNearby(
     lat: number,
     lng: number,
-    type: string
+    type: string,
+    radius: number
 ): Promise<POIResult[]> {
-    const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=${SEARCH_RADIUS}&type=${type}&key=${GOOGLE_API_KEY}`;
+    const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=${radius}&type=${type}&key=${GOOGLE_API_KEY}`;
 
     const response = await fetch(url);
     if (!response.ok) {
@@ -82,16 +114,61 @@ async function searchNearby(
 }
 
 /**
+ * Runs all 8 POI category searches at the given radius.
+ */
+async function runAllSearches(
+    lat: number,
+    lng: number,
+    radius: number
+): Promise<Record<string, POIResult[]>> {
+    const enrichmentResult: Record<string, POIResult[]> = {};
+
+    const searches = POI_CATEGORIES.map(async (category) => {
+        const allResults: POIResult[] = [];
+
+        for (const type of category.types) {
+            const results = await searchNearby(lat, lng, type, radius);
+            allResults.push(...results);
+        }
+
+        // Dedupe by name and take top 5 closest
+        const seen = new Set<string>();
+        const deduped = allResults.filter(r => {
+            if (seen.has(r.name)) return false;
+            seen.add(r.name);
+            return true;
+        });
+
+        deduped.sort((a, b) => a.distance_m - b.distance_m);
+        enrichmentResult[category.key] = deduped.slice(0, MAX_RESULTS_PER_CATEGORY);
+    });
+
+    await Promise.all(searches);
+    return enrichmentResult;
+}
+
+function countTotalPOIs(result: Record<string, POIResult[]>): number {
+    return Object.values(result).reduce((sum, arr) => sum + arr.length, 0);
+}
+
+/**
  * Enriches a property with nearby Points of Interest (POIs).
- * Searches 8 categories within 400m radius using Google Places Nearby Search.
+ * Searches 8 categories using Google Places Nearby Search.
+ *
+ * Smart Radius:
+ *   - Capital Cities (13): 400m
+ *   - Other Municipalities: 250m
+ *   - Fallback: if < 3 POIs, retry at 450m
+ *
  * Stores results in inmuebles.caracteristicas_externas as JSONB.
  */
 export async function enrichPOIs(
     propertyId: string,
     lat: number,
-    lng: number
+    lng: number,
+    city?: string
 ): Promise<{ success: boolean; data?: Record<string, POIResult[]>; error?: string }> {
-    console.log(`🧠 [enrichPOIs] Starting for property ${propertyId} at (${lat}, ${lng})`);
+    console.log(`🧠 [enrichPOIs] Starting for property ${propertyId} at (${lat}, ${lng}), city="${city || 'unknown'}"`);
 
     // Auth check
     const supabaseAuth = createServerSupabaseClient();
@@ -125,31 +202,22 @@ export async function enrichPOIs(
     }
 
     try {
-        // Search all 8 categories in parallel
-        const enrichmentResult: Record<string, POIResult[]> = {};
+        // ── SMART RADIUS: determine initial search radius ──
+        const initialRadius = getSmartRadius(city || '');
+        console.log(`[enrichPOIs] Using radius: ${initialRadius}m`);
 
-        const searches = POI_CATEGORIES.map(async (category) => {
-            // Search each type within the category, merge + dedupe results
-            const allResults: POIResult[] = [];
+        let enrichmentResult = await runAllSearches(lat, lng, initialRadius);
+        let totalPOIs = countTotalPOIs(enrichmentResult);
 
-            for (const type of category.types) {
-                const results = await searchNearby(lat, lng, type);
-                allResults.push(...results);
-            }
+        console.log(`[enrichPOIs] First pass: ${totalPOIs} POIs found at ${initialRadius}m`);
 
-            // Dedupe by name and take top 5 closest
-            const seen = new Set<string>();
-            const deduped = allResults.filter(r => {
-                if (seen.has(r.name)) return false;
-                seen.add(r.name);
-                return true;
-            });
-
-            deduped.sort((a, b) => a.distance_m - b.distance_m);
-            enrichmentResult[category.key] = deduped.slice(0, MAX_RESULTS_PER_CATEGORY);
-        });
-
-        await Promise.all(searches);
+        // ── FALLBACK: retry at 450m if too few results ──
+        if (totalPOIs < MIN_POI_THRESHOLD && initialRadius < FALLBACK_RADIUS) {
+            console.log(`[enrichPOIs] Only ${totalPOIs} POIs — retrying at ${FALLBACK_RADIUS}m`);
+            enrichmentResult = await runAllSearches(lat, lng, FALLBACK_RADIUS);
+            totalPOIs = countTotalPOIs(enrichmentResult);
+            console.log(`[enrichPOIs] Fallback pass: ${totalPOIs} POIs found at ${FALLBACK_RADIUS}m`);
+        }
 
         // Persist to DB
         const { error: updateError } = await supabase
@@ -165,9 +233,7 @@ export async function enrichPOIs(
             return { success: false, error: `DB error: ${updateError.message}` };
         }
 
-        // Count total POIs found
-        const totalPOIs = Object.values(enrichmentResult).reduce((sum, arr) => sum + arr.length, 0);
-        console.log(`✅ [enrichPOIs] Saved ${totalPOIs} POIs across 8 categories for property ${propertyId}`);
+        console.log(`✅ [enrichPOIs] Saved ${totalPOIs} POIs across 8 categories for property ${propertyId} (radius: ${totalPOIs < MIN_POI_THRESHOLD ? FALLBACK_RADIUS : initialRadius}m)`);
 
         return { success: true, data: enrichmentResult };
 

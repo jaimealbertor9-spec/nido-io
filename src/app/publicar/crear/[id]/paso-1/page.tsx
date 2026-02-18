@@ -618,7 +618,7 @@ export default function Paso1Page() {
 
             // Fire-and-forget POI enrichment
             if (latitud && longitud) {
-                enrichPOIs(propertyId, latitud, longitud).catch(err =>
+                enrichPOIs(propertyId, latitud, longitud, ciudad).catch(err =>
                     console.warn('[handleContinue] POI enrichment failed:', err)
                 );
             }
@@ -686,7 +686,7 @@ export default function Paso1Page() {
 
             // Fire-and-forget POI enrichment
             if (latitud && longitud) {
-                enrichPOIs(propertyId, latitud, longitud).catch(err =>
+                enrichPOIs(propertyId, latitud, longitud, ciudad).catch(err =>
                     console.warn('[SaveAndExit] POI enrichment failed:', err)
                 );
             }
