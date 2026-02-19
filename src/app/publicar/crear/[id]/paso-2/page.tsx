@@ -167,6 +167,8 @@ export default function Paso2Page() {
                     setInmuebleEstado(propData.estado ?? 'borrador');
                     setHabitaciones((propData as any).habitaciones ?? 0);
                     setBanos((propData as any).banos ?? 0);
+                    // Fix 3: Hydrate owner status from DB (default true for new drafts)
+                    setIsOwner((propData as any).es_propietario ?? true);
                     setStep1Data({
                         tipo_inmueble: propData.tipo_inmueble ?? null,
                         area_m2: propData.area_m2 ?? null,
@@ -322,13 +324,16 @@ export default function Paso2Page() {
     // ═══════════════════════════════════════════════════════════════
     // DOCUMENT HANDLERS
     // ═══════════════════════════════════════════════════════════════
-    const handleDocumentUploaded = async () => {
+    const handleDocumentUploaded = async (success?: boolean) => {
+        // Fix 2: Guard — do nothing if upload explicitly failed
+        if (success === false) return;
         if (!userId || !isMountedRef.current) return;
         try {
             const docs = await getUserVerificationDocuments(userId);
             if (!isMountedRef.current) return;
             setDocuments(docs);
-            await activatePaymentForInmueble(propertyId);
+            // Fix 1: Removed activatePaymentForInmueble() — status stays 'borrador'
+            // Only verifyPayment.ts (Wompi success) can transition to 'en_revision'
         } catch (e: any) {
             if (e?.name === 'AbortError' || e?.message?.includes('aborted')) return;
             console.error('Error in handleDocumentUploaded:', e);
@@ -381,18 +386,27 @@ export default function Paso2Page() {
     // COLLECT ALL FORM DATA FOR SAVING
     // ═══════════════════════════════════════════════════════════════
     const getFormPayload = () => {
-        const payload = {
-            titulo: title,
-            descripcion: description,
-            precio: parseInt(price) || 0,
-            tipo_negocio: offerType,
-            telefono_llamadas: telefono || null,
-            whatsapp: whatsapp || null,
-            administracion: adminFee ? parseInt(adminFee) : null,
-            video_url: videoUrl.trim() || null,
-            video_file: videoFile || null,
+        // Fix 4: Conditional inclusion — only write fields with real values
+        // Prevents overwriting DB data with empty/zero when state hasn't loaded
+        const payload: Record<string, any> = {
             updated_at: new Date().toISOString()
         };
+
+        // Core fields — only include if non-empty
+        if (title.trim()) payload.titulo = title;
+        if (description.trim()) payload.descripcion = description;
+        if (price && parseInt(price) > 0) payload.precio = parseInt(price);
+        payload.tipo_negocio = offerType; // always valid (default 'venta')
+        payload.telefono_llamadas = telefono || null;
+        payload.whatsapp = whatsapp || null;
+        if (adminFee) payload.administracion = parseInt(adminFee);
+
+        // Video fields — write if set, explicit null if cleared
+        if (videoUrl.trim()) payload.video_url = videoUrl.trim();
+        else if (videoUrl === '') payload.video_url = null;
+        if (videoFile) payload.video_file = videoFile;
+        else if (videoFile === '') payload.video_file = null;
+
         console.log('DEBUG: getFormPayload() =>', JSON.stringify(payload, null, 2));
         return payload;
     };
