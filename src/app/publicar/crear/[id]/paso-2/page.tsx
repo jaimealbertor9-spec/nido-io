@@ -397,6 +397,7 @@ export default function Paso2Page() {
         if (description.trim()) payload.descripcion = description;
         if (price && parseInt(price) > 0) payload.precio = parseInt(price);
         payload.tipo_negocio = offerType; // always valid (default 'venta')
+        payload.es_propietario = isOwner; // Fix B: always persist checkbox state
         payload.telefono_llamadas = telefono || null;
         payload.whatsapp = whatsapp || null;
         if (adminFee) payload.administracion = parseInt(adminFee);

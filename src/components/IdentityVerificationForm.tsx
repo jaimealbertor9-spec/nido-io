@@ -7,7 +7,7 @@ import { saveVerificationDocumentUrl } from '@/app/actions/submitVerification';
 
 interface InmuebleVerificationFormProps {
     inmuebleId: string;
-    onDocumentUploaded: () => void;
+    onDocumentUploaded: (success: boolean) => void;
     documentType?: 'cedula' | 'poder';
     isOptional?: boolean; // Mark as optional (for Power of Attorney)
 }
@@ -142,7 +142,7 @@ export default function InmuebleVerificationForm({
             setTimeout(() => {
                 if (!isMountedRef.current) return;
                 clearFile();
-                onDocumentUploaded(); // Trigger parent refresh
+                onDocumentUploaded(true); // Signal success to parent
             }, 1500);
 
         } catch (err: any) {
@@ -156,6 +156,9 @@ export default function InmuebleVerificationForm({
 
             // Only show feedback if still mounted
             if (!isMountedRef.current) return;
+
+            // Signal failure to parent so it doesn't refresh stale state
+            onDocumentUploaded(false);
 
             // User Feedback based on error type
             const errorMessage = err?.message || '';
