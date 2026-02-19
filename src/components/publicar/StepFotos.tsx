@@ -43,12 +43,13 @@ interface StepFotosProps {
     habitaciones?: number
     banos?: number
     onNext: () => void
+    onCategoriesChange?: (categories: string[]) => void
 }
 
 // ═══════════════════════════════════════════════════════════════
 // COMPONENT
 // ═══════════════════════════════════════════════════════════════
-export default function StepFotos({ inmuebleId, habitaciones = 0, banos = 0, onNext }: StepFotosProps) {
+export default function StepFotos({ inmuebleId, habitaciones = 0, banos = 0, onNext, onCategoriesChange }: StepFotosProps) {
     const [uploadedPhotos, setUploadedPhotos] = useState<Record<string, UploadedImage>>({})
     const [uploadingSlot, setUploadingSlot] = useState<string | null>(null)
     const [deletingSlot, setDeletingSlot] = useState<string | null>(null)
@@ -187,6 +188,11 @@ export default function StepFotos({ inmuebleId, habitaciones = 0, banos = 0, onN
             onNext()
         }
     }, [isLoading, qualityScore, onNext])
+
+    // Report uploaded categories to parent for payment gatekeeper
+    useEffect(() => {
+        onCategoriesChange?.(Object.keys(uploadedPhotos))
+    }, [uploadedPhotos, onCategoriesChange])
 
     // Auto-dismiss upload error after 5s
     useEffect(() => {

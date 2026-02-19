@@ -74,6 +74,7 @@ export default function Paso2Page() {
     const [documents, setDocuments] = useState<VerificationDocument[]>([]);
     const [deletingType, setDeletingType] = useState<string | null>(null);
     const [isOwner, setIsOwner] = useState(true);
+    const [uploadedCategories, setUploadedCategories] = useState<string[]>([]);
 
     const [userVerificationApproval, setUserVerificationApproval] = useState<UserVerificationStatusResult>({
         isApproved: false, status: 'not_found', hasAnyDocument: false
@@ -370,7 +371,9 @@ export default function Paso2Page() {
 
     const getMissingFields = () => {
         const missing = [];
-        if (!title.trim()) missing.push('Título');
+        if (!uploadedCategories.includes('fachada')) missing.push('Foto de Fachada');
+        if (!title.trim() || title.trim().length < 10) missing.push('Título (mín. 10 caracteres)');
+        if (!description.trim() || description.trim().length < 20) missing.push('Descripción (mín. 20 caracteres)');
         if (!price || parseInt(price) <= 0) missing.push('Precio');
         if (!telefono) missing.push('Teléfono');
         if (telefono && telefono.length !== 10) missing.push('Teléfono (10 dígitos)');
@@ -648,7 +651,7 @@ export default function Paso2Page() {
 
             {/* SECCIÓN 1: FOTOS */}
             <section className="bg-white border border-gray-200 rounded-md p-6">
-                <StepFotos inmuebleId={propertyId} habitaciones={habitaciones} banos={banos} onNext={() => setPhotosCompleted(true)} />
+                <StepFotos inmuebleId={propertyId} habitaciones={habitaciones} banos={banos} onNext={() => setPhotosCompleted(true)} onCategoriesChange={setUploadedCategories} />
             </section>
 
             {/* ═══════════════════════════════════════════════════════════════ */}
