@@ -1,13 +1,11 @@
 'use server';
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { createClient } from '@supabase/supabase-js';
+import { getServiceRoleClient } from '@/lib/supabase-admin';
 import type { GeneratedCopy, GenerateCopyResult } from './action-types';
 
 // Initialize clients
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || '');
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 // Re-export the types for consumers
 export type { GeneratedCopy, GenerateCopyResult } from './action-types';
@@ -35,7 +33,7 @@ export async function generateAdCopy(
         }
 
         // Fetch property data
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         const { data: property, error: fetchError } = await supabase
             .from('inmuebles')

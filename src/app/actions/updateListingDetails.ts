@@ -1,13 +1,9 @@
 'use server';
 
-import { createClient } from '@supabase/supabase-js';
 import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { getServiceRoleClient } from '@/lib/supabase-admin';
 import { revalidatePath } from 'next/cache';
 import type { UpdateListingResult } from './action-types';
-
-// Initialize Supabase
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 // Re-export the type for consumers
 export type { UpdateListingResult } from './action-types';
@@ -71,7 +67,7 @@ export async function updateListingDetails(
             return { success: false, error: 'Tipo de oferta inválido' };
         }
 
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         // ═══════════════════════════════════════════════════════════════
         // STEP B: Ownership Check (IDOR Protection)
@@ -137,7 +133,7 @@ export async function getListingDetails(propertyId: string): Promise<{
     neighborhood: string;
 } | null> {
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         const { data, error } = await supabase
             .from('inmuebles')
@@ -183,7 +179,7 @@ export async function getPropertyFeatures(propertyId: string): Promise<{
     console.log('📊 [getPropertyFeatures] Starting for property:', propertyId);
 
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         console.log('🔍 [getPropertyFeatures] Querying database...');
         // Note: Using aliasing to map DB column 'amenities' → 'amenidades' for application layer

@@ -1,12 +1,9 @@
 'use server';
 
-import { createClient } from '@supabase/supabase-js';
 import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { getServiceRoleClient } from '@/lib/supabase-admin';
 import { revalidatePath } from 'next/cache';
 import type { UpdateLocationResult } from './action-types';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 export type { UpdateLocationResult } from './action-types';
 
@@ -33,7 +30,7 @@ export async function updatePropertyLocation(
     }
 
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         const { data: property, error: ownerError } = await supabase
             .from('inmuebles')

@@ -1,14 +1,11 @@
 'use server'
 
-import { createClient } from '@supabase/supabase-js'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { getServiceRoleClient } from '@/lib/supabase-admin'
 import type { PropertyImageData } from './action-types'
 
 // Inicializamos el cliente con permisos de administrador para poder subir archivos sin bloqueos
-const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+const supabase = getServiceRoleClient()
 
 // Re-export the type for consumers (type-only exports are allowed)
 export type { PropertyImageData } from './action-types';
@@ -134,6 +131,8 @@ export async function getPropertyImages(propertyId: string): Promise<PropertyIma
 
 /**
  * Deletes a property image from storage and database
+ * 
+ * SECURITY (H-6 FIX): Session-based auth + ownership check prevents IDOR attacks
  */
 export async function deletePropertyImage(imageId: string): Promise<{ success: boolean; error?: string }> {
     if (!imageId?.trim()) {
@@ -141,19 +140,47 @@ export async function deletePropertyImage(imageId: string): Promise<{ success: b
     }
 
     try {
-        // Get the image URL first to extract storage path
+        // ═══════════════════════════════════════════════════════════════
+        // STEP A: Auth Check (Session-Based)
+        // ═══════════════════════════════════════════════════════════════
+        const supabaseAuth = createServerSupabaseClient();
+        const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+
+        if (authError || !user) {
+            console.error('❌ [deleteImage] Unauthorized - no session');
+            return { success: false, error: 'Unauthorized' };
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // STEP B: Fetch image + verify ownership via property join
+        // ═══════════════════════════════════════════════════════════════
         const { data: imageData, error: fetchError } = await supabase
             .from('inmueble_imagenes')
-            .select('url')
+            .select('id, url, inmueble_id')
             .eq('id', imageId)
             .single();
 
-        if (fetchError) {
-            console.error('[Delete] Fetch error:', fetchError);
+        if (fetchError || !imageData) {
+            console.error('[Delete] Image not found:', fetchError);
             return { success: false, error: 'Imagen no encontrada' };
         }
 
-        // Delete from database
+        // Ownership check: verify user owns the property this image belongs to
+        const { data: property, error: ownerError } = await supabase
+            .from('inmuebles')
+            .select('id')
+            .eq('id', imageData.inmueble_id)
+            .eq('propietario_id', user.id)
+            .single();
+
+        if (ownerError || !property) {
+            console.error('🚫 [deleteImage] IDOR blocked - user does not own property');
+            return { success: false, error: 'Unauthorized: You do not own this property' };
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // STEP C: Execute Deletion (Ownership Verified)
+        // ═══════════════════════════════════════════════════════════════
         const { error: deleteError } = await supabase
             .from('inmueble_imagenes')
             .delete()
@@ -179,8 +206,9 @@ export async function deletePropertyImage(imageId: string): Promise<{ success: b
 
         return { success: true };
 
-    } catch (err: any) {
+    } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Unknown error';
         console.error('[Delete] Unexpected error:', err);
-        return { success: false, error: err.message };
+        return { success: false, error: message };
     }
 }

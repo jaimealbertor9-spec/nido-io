@@ -1,15 +1,14 @@
 'use server';
 
-import { createClient } from '@supabase/supabase-js';
 import { revalidatePath } from 'next/cache';
+import { getServiceRoleClient } from '@/lib/supabase-admin';
+import { createServerSupabaseClient } from '@/lib/supabase-server';
 
 // ═══════════════════════════════════════════════════════════════
 // ADMIN VERIFICATION ACTIONS
 // Protected actions for approving/rejecting user verifications
+// SECURITY: All actions verify the caller's session via cookies
 // ═══════════════════════════════════════════════════════════════
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 // Types
 export interface AdminVerificationResult {
@@ -38,17 +37,35 @@ export interface PendingVerification {
 // VERIFY ADMIN ROLE
 // ═══════════════════════════════════════════════════════════════
 
-async function verifyAdminRole(adminUserId: string): Promise<boolean> {
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+/**
+ * Verifies that the current caller is authenticated AND is an admin.
+ * SECURITY: Uses session cookies — never trusts client-supplied UUIDs.
+ * @returns The verified admin user's ID, or null if unauthorized.
+ */
+async function verifyCallerIsAdmin(): Promise<string | null> {
+    // STEP 1: Verify session via cookies (not client-supplied ID)
+    const supabaseAuth = createServerSupabaseClient();
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
 
+    if (authError || !user) {
+        console.error('[Admin] No authenticated session found');
+        return null;
+    }
+
+    // STEP 2: Verify admin role in database
+    const supabase = getServiceRoleClient();
     const { data, error } = await supabase
         .from('usuarios')
         .select('rol')
-        .eq('id', adminUserId)
+        .eq('id', user.id)
         .single();
 
-    if (error || !data) return false;
-    return data.rol === 'admin';
+    if (error || !data || data.rol !== 'admin') {
+        console.error('[Admin] User is not an admin:', user.id);
+        return null;
+    }
+
+    return user.id;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -58,15 +75,15 @@ async function verifyAdminRole(adminUserId: string): Promise<boolean> {
 export async function getPendingVerifications(
     adminUserId: string
 ): Promise<PendingVerification[]> {
-    // Verify admin role
-    const isAdmin = await verifyAdminRole(adminUserId);
-    if (!isAdmin) {
+    // SECURITY: Verify caller session — adminUserId param is ignored for auth
+    const verifiedAdminId = await verifyCallerIsAdmin();
+    if (!verifiedAdminId) {
         console.error('[getPendingVerifications] Unauthorized access attempt');
         return [];
     }
 
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         const { data, error } = await supabase
             .from('user_verifications')
@@ -114,9 +131,9 @@ export async function adminApproveUser(
     adminUserId: string,
     targetUserId: string
 ): Promise<AdminVerificationResult> {
-    // Verify admin role
-    const isAdmin = await verifyAdminRole(adminUserId);
-    if (!isAdmin) {
+    // SECURITY: Verify caller session — adminUserId param is ignored for auth
+    const verifiedAdminId = await verifyCallerIsAdmin();
+    if (!verifiedAdminId) {
         return { success: false, error: 'No autorizado' };
     }
 
@@ -125,7 +142,7 @@ export async function adminApproveUser(
     }
 
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         // 1. Update verification status to verificado
         const { error: verifyError } = await supabase
@@ -133,7 +150,7 @@ export async function adminApproveUser(
             .update({
                 estado: 'verificado',
                 verified_at: new Date().toISOString(),
-                reviewed_by: adminUserId,
+                reviewed_by: verifiedAdminId,
                 updated_at: new Date().toISOString()
             })
             .eq('user_id', targetUserId);
@@ -144,13 +161,14 @@ export async function adminApproveUser(
         }
 
         // 2. Activate all IN_REVIEW listings for this user
+        // V-6 FIX: Column is propietario_id (NOT usuario_id)
         const { data: updatedListings, error: listingsError } = await supabase
             .from('inmuebles')
             .update({
                 estado: 'publicado',
                 updated_at: new Date().toISOString()
             })
-            .eq('usuario_id', targetUserId)
+            .eq('propietario_id', targetUserId)
             .eq('estado', 'en_revision')
             .select('id');
 
@@ -169,7 +187,7 @@ export async function adminApproveUser(
             .eq('sent', false);
 
         revalidatePath('/admin/verificaciones');
-        console.log(`✅ User ${targetUserId} approved by admin ${adminUserId}. ${affectedListings} listings activated.`);
+        console.log(`✅ User ${targetUserId} approved by admin ${verifiedAdminId}. ${affectedListings} listings activated.`);
 
         return { success: true, affectedListings };
 
@@ -189,9 +207,9 @@ export async function adminRejectUser(
     targetUserId: string,
     reason: string
 ): Promise<AdminVerificationResult> {
-    // Verify admin role
-    const isAdmin = await verifyAdminRole(adminUserId);
-    if (!isAdmin) {
+    // SECURITY: Verify caller session — adminUserId param is ignored for auth
+    const verifiedAdminId = await verifyCallerIsAdmin();
+    if (!verifiedAdminId) {
         return { success: false, error: 'No autorizado' };
     }
 
@@ -204,7 +222,7 @@ export async function adminRejectUser(
     }
 
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         // 1. Update verification status to rechazado
         const { error: rejectError } = await supabase
@@ -213,7 +231,7 @@ export async function adminRejectUser(
                 estado: 'rechazado',
                 rejected_at: new Date().toISOString(),
                 rejected_reason: reason.trim(),
-                reviewed_by: adminUserId,
+                reviewed_by: verifiedAdminId,
                 updated_at: new Date().toISOString()
             })
             .eq('user_id', targetUserId);
@@ -224,13 +242,14 @@ export async function adminRejectUser(
         }
 
         // 2. Reject all IN_REVIEW listings for this user
+        // V-6 FIX: Column is propietario_id (NOT usuario_id)
         const { data: rejectedListings, error: listingsError } = await supabase
             .from('inmuebles')
             .update({
                 estado: 'rechazado',
                 updated_at: new Date().toISOString()
             })
-            .eq('usuario_id', targetUserId)
+            .eq('propietario_id', targetUserId)
             .eq('estado', 'en_revision')
             .select('id');
 
@@ -248,7 +267,7 @@ export async function adminRejectUser(
             .eq('sent', false);
 
         revalidatePath('/admin/verificaciones');
-        console.log(`❌ User ${targetUserId} rejected by admin ${adminUserId}. Reason: ${reason}. ${affectedListings} listings rejected.`);
+        console.log(`❌ User ${targetUserId} rejected by admin ${verifiedAdminId}. Reason: ${reason}. ${affectedListings} listings rejected.`);
 
         return { success: true, affectedListings };
 
@@ -266,9 +285,9 @@ export async function getVerificationDocumentUrl(
     adminUserId: string,
     documentPath: string
 ): Promise<string | null> {
-    // Verify admin role
-    const isAdmin = await verifyAdminRole(adminUserId);
-    if (!isAdmin) {
+    // SECURITY: Verify caller session — adminUserId param is ignored for auth
+    const verifiedAdminId = await verifyCallerIsAdmin();
+    if (!verifiedAdminId) {
         console.error('[getVerificationDocumentUrl] Unauthorized');
         return null;
     }
@@ -276,7 +295,7 @@ export async function getVerificationDocumentUrl(
     if (!documentPath) return null;
 
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         // Extract bucket and path
         const pathParts = documentPath.split('/');

@@ -1,6 +1,6 @@
 'use server';
 
-import { createClient } from '@supabase/supabase-js';
+import { getServiceRoleClient } from '@/lib/supabase-admin';
 
 // Types
 export type VerificationStatus = 'NOT_FOUND' | 'pendiente' | 'aprobado' | 'rechazado' | 'loading';
@@ -15,9 +15,7 @@ export interface VerificationDocument {
 
 // 1. GET ALL USER DOCUMENTS
 export async function getUserVerificationDocuments(userId: string): Promise<VerificationDocument[]> {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = getServiceRoleClient();
 
     try {
         const { data, error } = await supabase
@@ -59,9 +57,7 @@ export async function submitVerificationDocument(
     fileType: string,
     tipoDocumento: 'cedula' | 'poder' = 'cedula'
 ) {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = getServiceRoleClient();
 
     try {
         // 1. Check if doc exists
@@ -130,9 +126,7 @@ export async function submitVerificationDocument(
 
 // 4. DELETE SPECIFIC DOCUMENT TYPE
 export async function deleteVerificationDocument(userId: string, tipoDocumento: string) {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = getServiceRoleClient();
 
     try {
         const { error } = await supabase
@@ -158,9 +152,7 @@ export async function saveVerificationDocumentUrl(
     tipoDocumento: 'cedula' | 'poder' = 'cedula',
     inmuebleId?: string
 ) {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = getServiceRoleClient();
 
     try {
         // 1. Check if doc already exists for this user and type

@@ -1,10 +1,7 @@
 'use server';
 
-import { createClient } from '@supabase/supabase-js';
 import { createServerSupabaseClient } from '@/lib/supabase-server';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+import { getServiceRoleClient } from '@/lib/supabase-admin';
 
 const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_SERVER_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
 
@@ -187,7 +184,7 @@ export async function enrichPOIs(
         return { success: false, error: 'Google API key not configured' };
     }
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = getServiceRoleClient();
 
     // Ownership check
     const { data: property, error: ownerError } = await supabase

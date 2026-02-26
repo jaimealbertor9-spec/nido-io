@@ -1,10 +1,7 @@
 'use server';
 
-import { createClient } from '@supabase/supabase-js';
 import { createServerSupabaseClient } from '@/lib/supabase-server';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+import { getServiceRoleClient } from '@/lib/supabase-admin';
 
 export async function createPropertyDraft(type: string): Promise<string> {
     console.log(`🚀 [createPropertyDraft] ALWAYS NEW DRAFT — Type: ${type}`);
@@ -27,7 +24,7 @@ export async function createPropertyDraft(type: string): Promise<string> {
     ];
     if (!validTypes.includes(type)) throw new Error(`Invalid type: ${type}`);
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = getServiceRoleClient();
 
     try {
         // ALWAYS INSERT — No search, no reuse, no loop
@@ -69,7 +66,7 @@ export async function deletePropertyDraft(
     const userId = user.id;
 
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         const { data: property, error: fetchError } = await supabase
             .from('inmuebles')

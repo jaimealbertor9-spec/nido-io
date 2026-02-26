@@ -5,13 +5,9 @@
  * Corrección de error 400 en actualización de pagos y manejo de JSON.
  */
 
-import { createClient } from '@supabase/supabase-js';
 import { revalidatePath } from 'next/cache';
+import { getServiceRoleClient } from '@/lib/supabase-admin';
 import type { VerifyPaymentResult } from './action-types';
-
-// Initialize Supabase with Service Role to bypass RLS policies
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 // Wompi API config - Detect based on key prefix, NOT environment variables
 // This prevents mismatch when using test keys in production environment
@@ -66,7 +62,7 @@ export async function verifyWompiTransaction(
 
         console.log('📦 [Verify] Wompi Response - Reference:', reference, 'Status:', wompiStatus);
 
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         // Try to find existing payment record
         const { data: pagoLocal, error: searchError } = await supabase
@@ -180,7 +176,7 @@ export async function verifyPaymentByReference(reference: string): Promise<Verif
         if (!reference) return { success: false, error: 'Reference is required' };
 
         console.log('🔍 [Verify] Looking up payment by reference:', reference);
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         const { data: payment, error } = await supabase
             .from('pagos')
@@ -239,7 +235,7 @@ async function processTransactionStatus(
     transactionId: string,
     transactionData: any
 ): Promise<VerifyPaymentResult> {
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = getServiceRoleClient();
 
     if (status === 'APPROVED') {
         console.log('✅ [Update] Status APPROVED. Starting updates...');
@@ -322,12 +318,13 @@ async function processTransactionStatus(
 /**
  * Verify payment by Draft ID (Payment Links passthrough flow)
  * Used when Wompi redirects with ?draftId= and no transaction ID
- * Assumes payment was successful if we reached here
+ * 
+ * SECURITY (C-1 FIX): Never auto-approve. Must verify via DB record or Wompi API.
  */
 async function verifyByDraftId(draftId: string): Promise<VerifyPaymentResult> {
     console.log('📋 [VerifyByDraftId] Processing for property:', draftId);
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = getServiceRoleClient();
 
     // Check if property exists
     const { data: property, error: propError } = await supabase
@@ -341,65 +338,107 @@ async function verifyByDraftId(draftId: string): Promise<VerifyPaymentResult> {
         return { success: false, error: 'Propiedad no encontrada' };
     }
 
-    // If already in revision or published, just return success
+    // If already in revision or published, return success (idempotent)
     if (property.estado === 'en_revision' || property.estado === 'publicado') {
         console.log('✅ [VerifyByDraftId] Property already processed:', property.estado);
         return { success: true, status: 'APPROVED', propertyId: draftId };
     }
 
-    // Create payment record if it doesn't exist
-    const reference = `NIDO-${draftId.substring(0, 8)}-${Date.now()}`;
-    const { error: paymentError } = await supabase
+    // ═══════════════════════════════════════════════════════════════
+    // STEP 1: Check for existing APPROVED payment in pagos table
+    // ═══════════════════════════════════════════════════════════════
+    const { data: approvedPayment } = await supabase
         .from('pagos')
-        .upsert({
-            usuario_id: property.propietario_id,
-            inmueble_id: draftId,
-            referencia_pedido: reference,
-            monto: 10000, // $10,000 COP
-            estado: 'aprobado',
-            metodo_pago: 'wompi_link',
-            datos_transaccion: {
-                verified_via: 'draftId_passthrough',
-                verified_at: new Date().toISOString()
+        .select('id, referencia_pedido, wompi_transaction_id')
+        .eq('inmueble_id', draftId)
+        .eq('estado', 'aprobado')
+        .maybeSingle();
+
+    if (approvedPayment) {
+        console.log('✅ [VerifyByDraftId] Found approved payment record:', approvedPayment.id);
+        return await processTransactionStatus(
+            'APPROVED',
+            draftId,
+            approvedPayment.referencia_pedido,
+            approvedPayment.wompi_transaction_id || '',
+            { status: 'APPROVED', verified_via: 'existing_record' }
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // STEP 2: Check for PENDING payment — poll Wompi to confirm
+    // ═══════════════════════════════════════════════════════════════
+    const { data: pendingPayment } = await supabase
+        .from('pagos')
+        .select('id, referencia_pedido, wompi_transaction_id')
+        .eq('inmueble_id', draftId)
+        .eq('estado', 'pendiente')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+    if (pendingPayment?.wompi_transaction_id) {
+        console.log('⏳ [VerifyByDraftId] Found pending payment, polling Wompi:', pendingPayment.wompi_transaction_id);
+
+        const wompiResponse = await fetch(
+            `${getWompiApiUrl()}/transactions/${pendingPayment.wompi_transaction_id}`,
+            { method: 'GET', headers: { 'Content-Type': 'application/json' }, cache: 'no-store' }
+        );
+
+        if (wompiResponse.ok) {
+            const wompiData = await wompiResponse.json();
+            const transaction = wompiData.data;
+            return await processTransactionStatus(
+                transaction.status,
+                draftId,
+                pendingPayment.referencia_pedido,
+                pendingPayment.wompi_transaction_id,
+                transaction
+            );
+        } else {
+            console.error('❌ [VerifyByDraftId] Wompi API error:', wompiResponse.status);
+        }
+    } else if (pendingPayment?.referencia_pedido) {
+        // Has a reference but no transaction ID — try searching by reference
+        console.log('⏳ [VerifyByDraftId] Pending payment without txn ID, searching by reference:', pendingPayment.referencia_pedido);
+
+        const wompiResponse = await fetch(
+            `${getWompiApiUrl()}/transactions?reference=${encodeURIComponent(pendingPayment.referencia_pedido)}`,
+            { method: 'GET', headers: { 'Content-Type': 'application/json' }, cache: 'no-store' }
+        );
+
+        if (wompiResponse.ok) {
+            const wompiData = await wompiResponse.json();
+            const transactions = wompiData.data || [];
+            if (transactions.length > 0) {
+                const transaction = transactions[0];
+                return await processTransactionStatus(
+                    transaction.status,
+                    draftId,
+                    pendingPayment.referencia_pedido,
+                    transaction.id,
+                    transaction
+                );
             }
-        }, {
-            onConflict: 'inmueble_id'
-        });
-
-    if (paymentError) {
-        console.warn('⚠️ [VerifyByDraftId] Payment upsert warning:', paymentError.message);
+        }
     }
 
-    // Update property status
-    const fechaPublicacion = new Date();
-    const fechaExpiracion = new Date();
-    fechaExpiracion.setDate(fechaExpiracion.getDate() + 30);
-
-    const { error: updateError } = await supabase
-        .from('inmuebles')
-        .update({
-            estado: 'en_revision',
-            fecha_publicacion: fechaPublicacion.toISOString(),
-            fecha_expiracion: fechaExpiracion.toISOString(),
-            updated_at: new Date().toISOString()
-        })
-        .eq('id', draftId);
-
-    if (updateError) {
-        console.error('❌ [VerifyByDraftId] Failed to update property:', updateError);
-        return { success: false, error: 'Error actualizando propiedad' };
-    }
-
-    console.log('✅ [VerifyByDraftId] Property updated to en_revision:', draftId);
-    revalidatePath('/mis-inmuebles');
-
-    return { success: true, status: 'APPROVED', propertyId: draftId };
+    // ═══════════════════════════════════════════════════════════════
+    // STEP 3: No payment found — refuse to approve
+    // ═══════════════════════════════════════════════════════════════
+    console.error('❌ [VerifyByDraftId] No approved or pending payment found for property:', draftId);
+    return {
+        success: false,
+        status: 'PENDING',
+        propertyId: draftId,
+        error: 'No se encontró un pago válido para esta propiedad. Si ya pagaste, espera unos momentos y recarga la página.'
+    };
 }
 
 // Helpers
 export async function getPropertySummary(propertyId: string) {
     if (!propertyId) return null;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = getServiceRoleClient();
     const { data } = await supabase.from('inmuebles').select('titulo, precio, barrio, ciudad').eq('id', propertyId).single();
     if (!data) return null;
     return {
@@ -414,7 +453,7 @@ export async function getPropertySummary(propertyId: string) {
 
 export async function getPropertyStatus(propertyId: string) {
     if (!propertyId) return null;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = getServiceRoleClient();
     const { data } = await supabase.from('inmuebles').select('estado').eq('id', propertyId).single();
     return data ? { estado: data.estado, isPendingVerification: data.estado === 'pendiente_verificacion' } : null;
 }

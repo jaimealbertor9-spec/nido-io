@@ -1,15 +1,14 @@
 'use server';
 
-import { createClient } from '@supabase/supabase-js';
 import { revalidatePath } from 'next/cache';
+import { getServiceRoleClient } from '@/lib/supabase-admin';
+import { createServerSupabaseClient } from '@/lib/supabase-server';
 
 // ═══════════════════════════════════════════════════════════════
 // VERIFICATION SERVER ACTIONS
 // Handles document upload, verification status, and timer management
+// SECURITY: uploadVerificationDocument verifies session before proceeding
 // ═══════════════════════════════════════════════════════════════
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 // Types
 export type VerificationStatus = 'pendiente_documentos' | 'pendiente' | 'verificado' | 'rechazado';
@@ -39,7 +38,7 @@ export async function checkUserVerified(userId: string): Promise<boolean> {
     if (!userId) return false;
 
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         const { data, error } = await supabase
             .from('user_verifications')
@@ -66,7 +65,7 @@ export async function getUserVerification(userId: string): Promise<UserVerificat
     if (!userId) return null;
 
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         const { data, error } = await supabase
             .from('user_verifications')
@@ -103,7 +102,7 @@ export async function startVerificationTimer(
     }
 
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         // Use the database function to start timer
         const { data, error } = await supabase.rpc('start_verification_timer', {
@@ -165,8 +164,24 @@ export async function uploadVerificationDocument(
         return { success: false, error: 'El archivo es muy grande. Máximo 10MB.' };
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // SECURITY (V-2 FIX): Verify caller session before trusting userId
+    // ═══════════════════════════════════════════════════════════════
+    const supabaseAuth = createServerSupabaseClient();
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+
+    if (authError || !user) {
+        console.error('❌ [uploadVerificationDocument] No authenticated session');
+        return { success: false, error: 'No autenticado' };
+    }
+
+    if (user.id !== userId) {
+        console.error('🚨 [uploadVerificationDocument] IDOR blocked: session user', user.id, 'tried to upload for', userId);
+        return { success: false, error: 'No autorizado: no puedes subir documentos para otro usuario' };
+    }
+
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         // Generate unique filename
         const timestamp = Date.now();

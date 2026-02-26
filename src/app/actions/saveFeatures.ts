@@ -1,13 +1,9 @@
 'use server';
 
-import { createClient } from '@supabase/supabase-js';
 import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { getServiceRoleClient } from '@/lib/supabase-admin';
 import { revalidatePath } from 'next/cache';
 import type { SaveFeaturesResult } from './action-types';
-
-// Initialize Supabase
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 // Re-export the type for consumers
 export type { SaveFeaturesResult } from './action-types';
@@ -57,7 +53,7 @@ export async function savePropertyFeatures(
             return { success: false, error: 'Rooms and baths cannot be negative' };
         }
 
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         // ═══════════════════════════════════════════════════════════════
         // STEP B: Ownership Check (IDOR Protection)
@@ -128,7 +124,7 @@ export async function getPropertyFeatures(propertyId: string): Promise<{
     servicios: string[];
 } | null> {
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         const { data, error } = await supabase
             .from('inmuebles')

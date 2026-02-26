@@ -50,6 +50,26 @@ export interface Inmueble {
     inmueble_imagenes?: { url: string }[];
 }
 
+export type TipoNegocio = 'venta' | 'arriendo';
+
+export interface InmuebleFormData {
+    barrio: string;
+    direccion: string;
+    tipo_negocio: TipoNegocio;
+    tipo_inmueble: string;
+    precio: number;
+    habitaciones: number;
+    banos: number;
+    area_m2: number;
+    tiene_garaje: boolean;
+    tiene_local: boolean;
+    tiene_sala: boolean;
+    tiene_comedor: boolean;
+    tiene_patio: boolean;
+    imagenes: string[];
+    titulo: string;
+}
+
 // Utilidad para formatear pesos colombianos
 export const formatCOP = (amount: number) => {
     return new Intl.NumberFormat('es-CO', {

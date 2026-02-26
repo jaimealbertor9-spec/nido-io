@@ -1,13 +1,9 @@
 'use server';
 
-import { createClient } from '@supabase/supabase-js';
 import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { getServiceRoleClient } from '@/lib/supabase-admin';
 import { revalidatePath } from 'next/cache';
 import type { UpdateDescriptionResult } from './action-types';
-
-// Initialize Supabase
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 // Re-export the type for consumers
 export type { UpdateDescriptionResult } from './action-types';
@@ -57,7 +53,7 @@ export async function updatePropertyDescription(
             return { success: false, error: 'Title cannot exceed 60 characters' };
         }
 
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         // ═══════════════════════════════════════════════════════════════
         // STEP B: Ownership Check (IDOR Protection)
@@ -113,7 +109,7 @@ export async function getPropertyDescription(propertyId: string): Promise<{
     keywords: string[];
 } | null> {
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         const { data, error } = await supabase
             .from('inmuebles')

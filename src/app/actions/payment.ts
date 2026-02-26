@@ -1,7 +1,7 @@
 'use server';
 
 import { createHash } from 'crypto';
-import { createClient } from '@supabase/supabase-js';
+import { getServiceRoleClient } from '@/lib/supabase-admin';
 
 const AMOUNT_IN_CENTS = 1000000; // $10,000 COP
 const CURRENCY = 'COP';
@@ -61,18 +61,7 @@ export async function initiatePaymentSession(
         console.log('✅ [Payment] WOMPI_PRIVATE_KEY: PRESENT (starts with:', privateKey.substring(0, 12) + '...)');
         console.log('✅ [Payment] WOMPI_PUBLIC_KEY: PRESENT');
 
-        // 1. Initialize Supabase client
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-        const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-
-        console.log('🔑 [Payment] SUPABASE_SERVICE_ROLE_KEY defined:', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
-
-        if (!supabaseUrl || !supabaseServiceKey) {
-            console.error("❌ CRITICAL: Supabase configuration is missing.");
-            throw new Error("La configuración del servidor está incompleta (Falta Config Supabase).");
-        }
-
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
         // 2. Fetch property and user data for customer info
         console.log('📋 [Payment] Fetching property data...');
         const { data: propertyData, error: propertyError } = await supabase
