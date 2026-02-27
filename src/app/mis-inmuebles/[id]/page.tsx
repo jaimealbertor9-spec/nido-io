@@ -61,7 +61,7 @@ export default function PropertyDetailsPage() {
         const controller = new AbortController();
         let cancelled = false; // local flag — immune to re-mount race
 
-        console.log('[Details] Mounted details page, propertyId:', propertyId, 'user:', !!user);
+        console.log('[Details] Mounted details page, propertyId:', propertyId, 'authLoading:', authLoading, 'user:', !!user);
 
         // CASE 1: No propertyId - nothing to fetch
         if (!propertyId) {
@@ -69,19 +69,20 @@ export default function PropertyDetailsPage() {
             return;
         }
 
-        // CASE 2: No user yet (auth still resolving or logged out)
-        if (!user) {
-            setLoading(false);
-            return;
+        // CASE 2: Auth still resolving — wait, don't bail
+        // The server layout already validated the session; we just need
+        // AuthProvider to hydrate the client-side user object.
+        if (authLoading) {
+            return; // Keep spinner alive, useEffect will re-run when authLoading changes
         }
 
-        // WATCHDOG: Force unlock after 8s if DB hangs (Vercel safety net)
+        // WATCHDOG: Force unlock after 5s if DB hangs (Vercel safety net)
         const watchdog = setTimeout(() => {
             if (!controller.signal.aborted) {
-                console.warn('[Details] ⚠️ Fetch timeout: Force releasing loading state after 8s');
+                console.warn('[Details] ⚠️ Fetch timeout: Force releasing loading state after 5s');
                 setLoading(false);
             }
-        }, 8000);
+        }, 5000);
 
         async function fetchProperty() {
             console.log('[Details] Fetching data for ID:', propertyId);
@@ -90,10 +91,8 @@ export default function PropertyDetailsPage() {
             setProperty(null);
 
             try {
-                // Force session handshake to wake up connection
-                const { error: authError } = await supabase.auth.getUser();
-                if (cancelled) return;
-                if (authError) throw authError;
+                // Server layout already validated auth; browser client auto-attaches
+                // session cookie — no need for redundant getUser() call here.
 
                 const { data, error } = await supabase
                     .from('inmuebles')
@@ -156,7 +155,7 @@ export default function PropertyDetailsPage() {
             controller.abort();
             clearTimeout(watchdog);
         };
-    }, [propertyId, user]);
+    }, [propertyId, user, authLoading]);
 
     const handleSignOut = async () => {
         await signOut();
@@ -330,6 +329,8 @@ export default function PropertyDetailsPage() {
                                             alt={property.titulo || 'Propiedad'}
                                             fill
                                             className="object-cover"
+                                            priority
+                                            sizes="(max-width: 1024px) 100vw, 66vw"
                                         />
                                     ) : (
                                         <div className="w-full h-full flex items-center justify-center text-gray-400">
