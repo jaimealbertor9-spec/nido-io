@@ -338,10 +338,24 @@ async function verifyByDraftId(draftId: string): Promise<VerifyPaymentResult> {
         return { success: false, error: 'Propiedad no encontrada' };
     }
 
-    // If already in revision or published, return success (idempotent)
+    // Idempotency: if already processed, verify a real payment exists before confirming
     if (property.estado === 'en_revision' || property.estado === 'publicado') {
-        console.log('✅ [VerifyByDraftId] Property already processed:', property.estado);
-        return { success: true, status: 'APPROVED', propertyId: draftId };
+        console.log('🔍 [VerifyByDraftId] Property state is:', property.estado, '— verifying payment record...');
+
+        const { data: confirmedPayment } = await supabase
+            .from('pagos')
+            .select('id')
+            .eq('inmueble_id', draftId)
+            .eq('estado', 'aprobado')
+            .maybeSingle();
+
+        if (confirmedPayment) {
+            console.log('✅ [VerifyByDraftId] Confirmed payment exists:', confirmedPayment.id);
+            return { success: true, status: 'APPROVED', propertyId: draftId };
+        }
+
+        // No approved payment found — fall through to normal verification
+        console.warn('⚠️ [VerifyByDraftId] Property in', property.estado, 'but NO approved payment — continuing verification...');
     }
 
     // ═══════════════════════════════════════════════════════════════

@@ -1,6 +1,6 @@
 'use server';
 
-import { createClient } from '@supabase/supabase-js';
+import { getServiceRoleClient } from '@/lib/supabase-admin';
 import { revalidatePath } from 'next/cache';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -8,8 +8,7 @@ import { revalidatePath } from 'next/cache';
 // Per-inmueble verification system with Spanish enums
 // ═══════════════════════════════════════════════════════════════════════════
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -75,7 +74,7 @@ export async function getInmuebleVerifications(
     if (!inmuebleId) return [];
 
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         const { data, error } = await supabase
             .from('user_verifications')
@@ -103,7 +102,7 @@ export async function hasRequiredDocument(inmuebleId: string): Promise<boolean> 
     if (!inmuebleId) return false;
 
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         const { data, error } = await supabase
             .from('user_verifications')
@@ -144,7 +143,7 @@ export async function uploadInmuebleDocument(
     }
 
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         // Generate unique path: {userId}/{inmuebleId}/{tipoDocumento}_{timestamp}.{ext}
         const timestamp = Date.now();
@@ -215,7 +214,7 @@ export async function validateInmuebleForPayment(
     }
 
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         // 1. Fetch inmueble data
         const { data: inmueble, error: inmuebleError } = await supabase
@@ -277,7 +276,7 @@ export async function activatePaymentForInmueble(
     }
 
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         // 1. Validate inmueble
         const validation = await validateInmuebleForPayment(inmuebleId);
@@ -347,7 +346,7 @@ export async function getInmuebleEstado(
     if (!inmuebleId) return null;
 
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         const { data, error } = await supabase
             .from('inmuebles')
@@ -387,7 +386,7 @@ export async function getUserVerificationApprovalStatus(
     if (!userId) return defaultResult;
 
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         // Get the most recent verification record for this user
         const { data, error } = await supabase
@@ -441,7 +440,7 @@ export async function checkUserHasPendingVerificationInmuebles(
     if (!userId) return defaultResult;
 
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         // Find inmuebles with pending verification for this user
         const { data, error } = await supabase
@@ -483,7 +482,7 @@ export async function checkUserDocumentsPendingApproval(
     if (!userId) return defaultResult;
 
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         // Check for documents that are either 'pendiente' or 'pendiente_revision'
         // Both states block the user from creating new properties
@@ -544,7 +543,7 @@ export async function deleteDocument(
     }
 
     try {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const supabase = getServiceRoleClient();
 
         // Step 1: Fetch the document record to get storage path
         const { data: docRecord, error: fetchError } = await supabase
