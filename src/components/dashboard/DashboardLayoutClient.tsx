@@ -44,9 +44,6 @@ export default function DashboardLayoutClient({ children }: { children: React.Re
                         <LayoutDashboard className="w-5 h-5 mr-3" /> <span className="font-medium">Dashboard</span>
                     </Link>
                     <a href="#" className="flex items-center px-4 py-3 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors group">
-                        <Building className="w-5 h-5 mr-3 group-hover:text-[#1A56DB] transition-colors" /> <span className="font-medium">Mis Propiedades</span>
-                    </a>
-                    <a href="#" className="flex items-center px-4 py-3 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors group">
                         <BarChart2 className="w-5 h-5 mr-3 group-hover:text-[#1A56DB] transition-colors" /> <span className="font-medium">Analíticas</span>
                     </a>
                     <Link href="/mis-inmuebles/mensajes" className={`flex items-center px-4 py-3 rounded-lg transition-colors group ${pathname === '/mis-inmuebles/mensajes' ? 'bg-blue-50 text-[#1A56DB]' : 'text-gray-500 hover:bg-gray-100 hover:text-[#1A56DB]'}`}>
