@@ -176,9 +176,16 @@ export default function Paso1Page() {
     const [markerPosition, setMarkerPosition] = useState(CITY_CENTERS['El Líbano']);
     const [mapCenter, setMapCenter] = useState(CITY_CENTERS['El Líbano']);
 
+    // Autocomplete UI State
+    const [searchValue, setSearchValue] = useState("");
+    const [predictions, setPredictions] = useState<google.maps.places.AutocompletePrediction[]>([]);
+    const [isDropdownVisible, setIsDropdownVisible] = useState(false);
+
     // Refs
-    const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
-    const searchInputRef = useRef<HTMLInputElement | null>(null);
+    const autocompleteServiceRef = useRef<google.maps.places.AutocompleteService | null>(null);
+    const placesServiceRef = useRef<google.maps.places.PlacesService | null>(null);
+    const sessionTokenRef = useRef<google.maps.places.AutocompleteSessionToken | null>(null);
+
     const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
     const mapInstanceRef = useRef<google.maps.Map | null>(null);
 
@@ -305,35 +312,78 @@ export default function Paso1Page() {
     }, [propertyId]);
 
     // ═══════════════════════════════════════════════════════════════
-    // AUTOCOMPLETE — useCallback initializer (called from two places)
+    // AUTOCOMPLETE SERVICE MIGRATION
     // ═══════════════════════════════════════════════════════════════
     const initAutocomplete = useCallback(() => {
-        // Already attached? Skip.
-        if (autocompleteRef.current) return;
+        if (!window.google?.maps?.places) return;
 
-        // Guard: input must exist
-        const input = searchInputRef.current;
-        if (!input) {
-            console.warn('[Autocomplete] searchInputRef.current is null — skipping');
+        if (!autocompleteServiceRef.current) {
+            autocompleteServiceRef.current = new window.google.maps.places.AutocompleteService();
+            sessionTokenRef.current = new window.google.maps.places.AutocompleteSessionToken();
+            console.log('[AutocompleteService] INITIALIZED');
+        }
+    }, []);
+
+    useEffect(() => {
+        if (isMapLoaded) {
+            initAutocomplete();
+        }
+    }, [isMapLoaded, initAutocomplete]);
+
+    const handleSearchInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const val = e.target.value;
+        setSearchValue(val);
+
+        if (!val.trim()) {
+            setPredictions([]);
+            setIsDropdownVisible(false);
             return;
         }
 
-        // Guard: Places library must be loaded
-        if (!window.google?.maps?.places) {
-            console.warn('[Autocomplete] google.maps.places not available yet');
-            return;
+        console.log("Fetching predictions for:", val);
+
+        if (autocompleteServiceRef.current && sessionTokenRef.current) {
+            try {
+                autocompleteServiceRef.current.getPlacePredictions({
+                    input: val,
+                    componentRestrictions: { country: 'co' },
+                    types: ['geocode', 'establishment'],
+                    sessionToken: sessionTokenRef.current
+                }, (results, status) => {
+                    console.log("Predictions received status:", status, "results:", results);
+                    if (status === window.google.maps.places.PlacesServiceStatus.OK && results) {
+                        setPredictions(results);
+                        setIsDropdownVisible(true);
+                    } else {
+                        setPredictions([]);
+                        setIsDropdownVisible(false);
+                    }
+                });
+            } catch (err) {
+                console.error("Autocomplete API error:", err);
+            }
+        } else {
+            console.warn("Autocomplete service not ready:", { service: !!autocompleteServiceRef.current, token: !!sessionTokenRef.current });
+        }
+    };
+
+    const handleSelectPrediction = (placeId: string, description: string) => {
+        setSearchValue(description);
+        setDireccionFormateada(description);
+        setIsDropdownVisible(false);
+        setPredictions([]);
+
+        if (!placesServiceRef.current && window.google?.maps?.places) {
+            placesServiceRef.current = new window.google.maps.places.PlacesService(document.createElement('div'));
         }
 
-        try {
-            const autocomplete = new window.google.maps.places.Autocomplete(input, {
-                componentRestrictions: { country: 'co' },
+        if (placesServiceRef.current && sessionTokenRef.current) {
+            placesServiceRef.current.getDetails({
+                placeId: placeId,
                 fields: ['geometry', 'formatted_address', 'name', 'address_components'],
-                types: ['geocode', 'establishment'],
-            });
-
-            autocomplete.addListener('place_changed', () => {
-                const place = autocomplete.getPlace();
-                if (place.geometry?.location) {
+                sessionToken: sessionTokenRef.current
+            }, (place, status) => {
+                if (status === window.google.maps.places.PlacesServiceStatus.OK && place && place.geometry?.location) {
                     const newLat = place.geometry.location.lat();
                     const newLng = place.geometry.location.lng();
                     const newPos = { lat: newLat, lng: newLng };
@@ -353,9 +403,7 @@ export default function Paso1Page() {
                         const parsed = formatAddress(place.address_components, place.name);
 
                         setDireccionFormateada(parsed.formatted);
-                        if (searchInputRef.current) {
-                            searchInputRef.current.value = parsed.formatted;
-                        }
+                        setSearchValue(parsed.formatted);
 
                         if (parsed.route && parsed.streetNumber) {
                             setAddress(`${parsed.route} #${parsed.streetNumber}`);
@@ -367,7 +415,6 @@ export default function Paso1Page() {
                         if (barrio) {
                             setNeighborhood(prev => prev.trim() ? prev : barrio);
                         }
-                        // Always persist sublocality as subdivision
                         if (parsed.sublocality) {
                             setSubdivision(parsed.sublocality);
                         }
@@ -379,9 +426,9 @@ export default function Paso1Page() {
                             );
                             setCiudad(matchedCity || parsed.city);
                         }
-
-                        console.log('[Autocomplete] formatAddress →', parsed.formatted);
                     }
+
+                    sessionTokenRef.current = new window.google.maps.places.AutocompleteSessionToken();
 
                     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
                     debounceTimerRef.current = setTimeout(() => {
@@ -389,29 +436,8 @@ export default function Paso1Page() {
                     }, 3000);
                 }
             });
-
-            autocompleteRef.current = autocomplete;
-            console.log('[Autocomplete] ATTACHED');
-        } catch (err) {
-            console.error('[Autocomplete] Failed to initialize:', err);
         }
-    }, []);
-
-    // Trigger 1: When Google Maps finishes loading
-    useEffect(() => {
-        if (isMapLoaded) {
-            initAutocomplete();
-        }
-    }, [isMapLoaded, initAutocomplete]);
-
-    // Trigger 2: When loading finishes (input ref becomes available in DOM)
-    useEffect(() => {
-        if (!isLoading && isMapLoaded) {
-            // Small delay to ensure DOM has rendered the input
-            const timer = setTimeout(() => initAutocomplete(), 200);
-            return () => clearTimeout(timer);
-        }
-    }, [isLoading, isMapLoaded, initAutocomplete]);
+    };
 
     // ═══════════════════════════════════════════════════════════════
     // PAC-CONTAINER STYLE INJECTION (ensures autocomplete dropdown is visible)
@@ -457,8 +483,8 @@ export default function Paso1Page() {
     // Pre-fill search bar with saved address on load
     // ═══════════════════════════════════════════════════════════════
     useEffect(() => {
-        if (direccionFormateada && searchInputRef.current) {
-            searchInputRef.current.value = direccionFormateada;
+        if (direccionFormateada) {
+            setSearchValue(direccionFormateada);
         }
     }, [direccionFormateada]);
 
@@ -483,9 +509,7 @@ export default function Paso1Page() {
                 // ── Update formatted address → search bar text ──
                 if (parsed.formatted) {
                     setDireccionFormateada(parsed.formatted);
-                    if (searchInputRef.current) {
-                        searchInputRef.current.value = parsed.formatted;
-                    }
+                    setSearchValue(parsed.formatted);
                 }
 
                 // ── Set city ──
@@ -817,17 +841,36 @@ export default function Paso1Page() {
                 </div>
 
                 {/* Google Places Search Bar */}
-                <div className="mb-5">
+                <div className="mb-5 relative z-[100]">
                     <label className="block text-sm font-medium text-slate-700 mb-1.5">
                         <Search className="inline w-4 h-4 mr-1" />
                         Buscar Dirección
                     </label>
                     <input
-                        ref={searchInputRef}
                         type="text"
+                        value={searchValue}
+                        onChange={handleSearchInput}
+                        onFocus={() => { if (predictions.length > 0) setIsDropdownVisible(true); }}
+                        onBlur={() => { setTimeout(() => setIsDropdownVisible(false), 200); }}
                         placeholder="Busca una dirección, lugar o punto de referencia..."
                         className="w-full h-12 px-4 bg-white border-2 border-[#0c263b]/20 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#0c263b] focus:border-transparent text-base"
                     />
+
+                    {isDropdownVisible && predictions.length > 0 && (
+                        <ul className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                            {predictions.map((p) => (
+                                <li
+                                    key={p.place_id}
+                                    onClick={() => handleSelectPrediction(p.place_id, p.description)}
+                                    className="px-4 py-3 hover:bg-slate-50 cursor-pointer border-b border-gray-100 last:border-0"
+                                >
+                                    <div className="text-sm font-medium text-slate-800">{p.structured_formatting.main_text}</div>
+                                    <div className="text-xs text-slate-500">{p.structured_formatting.secondary_text}</div>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+
                     <p className="mt-1 text-xs text-slate-400">
                         Busca y selecciona una dirección. El mapa se moverá automáticamente.
                     </p>
