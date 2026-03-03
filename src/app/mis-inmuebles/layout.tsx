@@ -1,5 +1,6 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
+import DashboardLayoutClient from '@/components/dashboard/DashboardLayoutClient';
 
 /**
  * FORCE DYNAMIC RENDERING
@@ -15,6 +16,7 @@ export const dynamic = 'force-dynamic';
  * SINGLE SOURCE OF TRUTH for:
  * 1. Authentication - Validates session exists
  * 2. Authorization - Validates tipo_usuario === 'propietario'
+ * 3. Layout - The global Sidebar and Topbar are now here.
  * 
  * Unauthorized users are redirected BEFORE any children render.
  */
@@ -68,6 +70,10 @@ export default async function MisInmueblesLayout({
 
     console.log('✅ [Layout] Access granted - propietario verified');
 
-    // User is authenticated AND authorized, render children
-    return <>{children}</>;
+    // User is authenticated AND authorized, render unified layout
+    return (
+        <DashboardLayoutClient>
+            {children}
+        </DashboardLayoutClient>
+    );
 }

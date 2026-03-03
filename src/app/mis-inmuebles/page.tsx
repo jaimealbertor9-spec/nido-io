@@ -1,6 +1,7 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import DashboardClient from './_components/DashboardClient';
+import { getUserPublishContext } from '@/app/actions/publishContext';
 
 /**
  * Server Component Page for Dashboard.
@@ -35,12 +36,17 @@ export default async function DashboardPage() {
         console.error('Error fetching properties:', propsError.message);
     }
 
+    // Check if user is a first timer (for the Free Tier UX hook)
+    const publishContext = await getUserPublishContext(user.id);
+    const isFirstTimer = publishContext.type === 'FIRST_TIMER';
+
     // Pass all data to Client Component
     return (
         <DashboardClient
             user={user}
             profile={profile}
             properties={properties || []}
+            isFirstTimer={isFirstTimer}
         />
     );
 }

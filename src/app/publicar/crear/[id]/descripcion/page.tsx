@@ -178,7 +178,7 @@ export default function DetallesYPrecioPage() {
             );
 
             if (result.success) {
-                router.push(`/publicar/pago/${propertyId}`);
+                router.push(`/publicar/planes/${propertyId}`);
             } else {
                 setError(result.error || 'Error al guardar');
             }

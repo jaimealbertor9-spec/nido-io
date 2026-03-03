@@ -202,58 +202,60 @@ function AuthContent() {
     // ============================================================
     return (
         <div className={`${fredoka.className} flex min-h-screen bg-white`}>
-            {/* LEFT SIDE - INFO (Dark Blue) */}
-            <div className="hidden lg:flex w-1/2 bg-[#0f172a] text-white flex-col justify-center px-16 relative overflow-hidden">
+            <div className="hidden lg:flex w-1/2 bg-gradient-to-br from-[#0a192f] via-[#112240] to-[#0a192f] text-white flex-col justify-center px-16 xl:px-24 relative overflow-hidden">
+                {/* DECORATIVE ELEMENTS */}
+                <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-blue-500/20 rounded-full blur-[100px] pointer-events-none" />
+                <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-purple-500/10 rounded-full blur-[100px] pointer-events-none" />
+
                 {/* LOGO */}
-                <div className="absolute top-10 left-10">
+                <div className="absolute top-12 left-12 xl:left-16 z-20">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                         src="/Logo solo Nido.png"
                         alt="Logo Nido"
-                        className="h-14 w-auto"
+                        className="h-16 w-auto drop-shadow-lg transition-transform hover:scale-105"
                     />
                 </div>
 
-                <div className="z-10 max-w-lg mt-20">
-                    <h1 className="text-5xl font-bold leading-tight mb-6">
-                        Publica tu inmueble en Nido
+                <div className="relative z-10 max-w-lg mt-20 animate-in fade-in slide-in-from-left-8 duration-700">
+                    <h1 className="text-5xl lg:text-6xl font-extrabold leading-tight mb-6 text-white tracking-tight">
+                        Haz que tu inmueble <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-300 to-yellow-500">despegue</span>.
                     </h1>
 
-                    <div className="inline-block bg-[#2563eb] px-4 py-2 rounded-lg mb-8">
-                        <span className="font-medium text-lg">
-                            Tarifa única de <span className="font-bold">$10.000 COP</span> por publicación
+                    <div className="inline-block bg-gradient-to-r from-blue-600 to-blue-500 px-6 py-3 rounded-2xl mb-10 shadow-xl border border-blue-400/30">
+                        <span className="font-bold text-xl text-white flex items-center gap-2">
+                            🎁 ¡Publica tu primer inmueble GRATIS!
                         </span>
                     </div>
 
-                    <div className="space-y-6 text-lg text-gray-200">
-                        <div className="flex items-center gap-4">
-                            <div className="p-2 bg-white/10 rounded-full">
-                                <Check className="w-5 h-5 text-[#3b82f6]" />
+                    <div className="space-y-6 text-lg text-blue-100/90 font-medium">
+                        <div className="flex items-center gap-4 group">
+                            <div className="p-2.5 bg-blue-500/20 rounded-xl group-hover:bg-blue-500/40 transition-colors border border-blue-400/20">
+                                <Check className="w-6 h-6 text-blue-300" />
                             </div>
-                            <span>Sin comisiones mensuales.</span>
+                            <span>Recibe contactos directos.</span>
                         </div>
-                        <div className="flex items-center gap-4">
-                            <div className="p-2 bg-white/10 rounded-full">
-                                <Check className="w-5 h-5 text-[#3b82f6]" />
+                        <div className="flex items-center gap-4 group">
+                            <div className="p-2.5 bg-blue-500/20 rounded-xl group-hover:bg-blue-500/40 transition-colors border border-blue-400/20">
+                                <Check className="w-6 h-6 text-blue-300" />
                             </div>
-                            <span>Contacto directo a tu WhatsApp.</span>
+                            <span>Control total de tu anuncio.</span>
                         </div>
-                        <div className="flex items-center gap-4">
-                            <div className="p-2 bg-white/10 rounded-full">
-                                <Check className="w-5 h-5 text-[#3b82f6]" />
+                        <div className="flex items-center gap-4 group">
+                            <div className="p-2.5 bg-blue-500/20 rounded-xl group-hover:bg-blue-500/40 transition-colors border border-blue-400/20">
+                                <Check className="w-6 h-6 text-blue-300" />
                             </div>
-                            <span>Visibilidad en Líbano y alrededores.</span>
-                        </div>
-                        <div className="flex items-center gap-4">
-                            <div className="p-2 bg-white/10 rounded-full">
-                                <Check className="w-5 h-5 text-[#3b82f6]" />
-                            </div>
-                            <span>Galería de fotos ilimitada.</span>
+                            <span>Sin comisiones por venta.</span>
                         </div>
                     </div>
 
-                    <div className="mt-12 pt-8 border-t border-white/10 text-sm text-gray-400">
-                        Más de <span className="text-white font-bold">500 propiedades</span> publicadas en Líbano, Tolima.
+                    <div className="mt-14 pt-8 border-t border-white/10 text-sm text-blue-200/60 flex items-center gap-4">
+                        <div className="flex -space-x-3">
+                            <div className="w-10 h-10 rounded-full border-2 border-[#0f172a] bg-blue-200"></div>
+                            <div className="w-10 h-10 rounded-full border-2 border-[#0f172a] bg-green-200"></div>
+                            <div className="w-10 h-10 rounded-full border-2 border-[#0f172a] bg-amber-200 flex items-center justify-center text-[#0f172a] font-bold text-xs">+1K</div>
+                        </div>
+                        <p>Únete a la red inmobiliaria de mayor crecimiento.</p>
                     </div>
                 </div>
             </div>
