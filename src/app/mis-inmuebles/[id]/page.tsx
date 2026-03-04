@@ -12,9 +12,7 @@ import {
 } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { submitLead } from '@/app/actions/submitLead';
 import { getPropertyPremiumStatus } from '@/app/actions/getMyLeads';
-import ContactSection from '@/components/dashboard/ContactSection';
 
 interface PropertyImage {
     id: string;
@@ -48,7 +46,7 @@ interface Property {
     video_file: string | null;
 }
 
-// ContactSection is now imported from '@/components/dashboard/ContactSection'
+
 
 export default function PropertyDetailsPage() {
     const params = useParams();
@@ -476,30 +474,63 @@ export default function PropertyDetailsPage() {
                             </Link>
                         </div>
 
-                        {/* Quick Stats */}
-                        <div className="bg-white/60 rounded-3xl border border-white/50 shadow-sm backdrop-blur-md p-6">
-                            <h3 className="text-sm font-semibold text-gray-700 mb-4">Estadísticas</h3>
-                            <div className="space-y-3">
-                                <div className="flex items-center justify-between">
-                                    <span className="text-sm text-gray-500">Visualizaciones</span>
-                                    <span className="font-bold text-gray-800">0</span>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <span className="text-sm text-gray-500">Contactos</span>
-                                    <span className="font-bold text-gray-800">0</span>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <span className="text-sm text-gray-500">Guardados</span>
-                                    <span className="font-bold text-gray-800">0</span>
+                        {/* Quick Stats — Premium Gated */}
+                        {isPremium ? (
+                            <div className="bg-white/60 rounded-3xl border border-white/50 shadow-sm backdrop-blur-md p-6">
+                                <h3 className="text-sm font-semibold text-gray-700 mb-4">Estadísticas</h3>
+                                <div className="space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-sm text-gray-500">Visualizaciones</span>
+                                        <span className="font-bold text-gray-800">0</span>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-sm text-gray-500">Contactos</span>
+                                        <span className="font-bold text-gray-800">0</span>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-sm text-gray-500">Guardados</span>
+                                        <span className="font-bold text-gray-800">0</span>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-
-                        {/* Contact Info — Premium Gated */}
-                        <ContactSection
-                            property={property}
-                            isPremium={isPremium}
-                        />
+                        ) : (
+                            <div className="bg-white/60 rounded-3xl border border-white/50 shadow-sm backdrop-blur-md p-6 relative overflow-hidden">
+                                {/* Blurred placeholder stats */}
+                                <div className="blur-sm pointer-events-none select-none">
+                                    <h3 className="text-sm font-semibold text-gray-700 mb-4">Estadísticas</h3>
+                                    <div className="space-y-3">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-sm text-gray-500">Visualizaciones</span>
+                                            <span className="font-bold text-gray-800">124</span>
+                                        </div>
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-sm text-gray-500">Contactos</span>
+                                            <span className="font-bold text-gray-800">8</span>
+                                        </div>
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-sm text-gray-500">Guardados</span>
+                                            <span className="font-bold text-gray-800">15</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                {/* Overlay CTA */}
+                                <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/70 backdrop-blur-[2px] rounded-3xl">
+                                    <div className="p-3 bg-amber-100 rounded-full mb-3">
+                                        <Lock className="w-5 h-5 text-amber-600" />
+                                    </div>
+                                    <p className="text-sm font-semibold text-gray-800 text-center px-4 mb-3">
+                                        Mejora tu plan para ver las estadísticas
+                                    </p>
+                                    <Link
+                                        href={`/publicar/planes/${property.id}`}
+                                        className="px-4 py-2 bg-[#1A56DB] text-white text-xs font-bold rounded-lg hover:bg-blue-700 transition-colors shadow-sm flex items-center gap-1.5"
+                                    >
+                                        <Crown className="w-3.5 h-3.5" />
+                                        Ver Planes
+                                    </Link>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
