@@ -174,11 +174,20 @@ export default function PropertyDetailsPage() {
 
     const getStatusBadge = (estado: string | null) => {
         const status = estado?.toLowerCase() || 'borrador';
+        // Check if this property's fecha_expiracion has passed
+        const isExpired = property?.estado === 'publicado'
+            && (property as any)?.fecha_expiracion
+            && new Date((property as any).fecha_expiracion) < new Date();
+        if (isExpired) {
+            return { label: 'EXPIRADO', classes: 'bg-red-500/90 border-red-400/50', icon: Clock };
+        }
         switch (status) {
             case 'publicado':
                 return { label: 'PUBLICADO', classes: 'bg-emerald-500/90 border-emerald-400/50', icon: CheckCircle };
             case 'en_revision':
                 return { label: 'EN REVISIÓN', classes: 'bg-amber-500/90 border-amber-400/50', icon: Clock };
+            case 'expirado':
+                return { label: 'EXPIRADO', classes: 'bg-red-500/90 border-red-400/50', icon: Clock };
             default:
                 return { label: 'BORRADOR', classes: 'bg-slate-500/90 border-slate-400/50', icon: Eye };
         }

@@ -25,15 +25,23 @@ interface DashboardClientProps {
 export default function DashboardClient({ user, profile, properties, isFirstTimer = false }: DashboardClientProps) {
     // UI State only
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-    const [currentFilter, setCurrentFilter] = useState<'todos' | 'publicado' | 'en_revision' | 'borrador'>('todos');
+    const [currentFilter, setCurrentFilter] = useState<'todos' | 'publicado' | 'en_revision' | 'borrador' | 'expirado'>('todos');
 
     // Derived display values
     const displayName = profile?.nombre || user?.user_metadata?.full_name || user?.email?.split('@')[0];
 
     // Stats calculation
+    // Compute effective estado: if publicado but fecha_expiracion has passed, treat as expired
+    const getEffectiveEstado = (p: any) => {
+        if (p.estado === 'publicado' && p.fecha_expiracion && new Date(p.fecha_expiracion) < new Date()) {
+            return 'expirado';
+        }
+        return p.estado?.toLowerCase() || 'borrador';
+    };
+
     const stats = useMemo(() => {
         const total = properties.length;
-        const publicados = properties.filter(p => p.estado === 'publicado').length;
+        const publicados = properties.filter(p => getEffectiveEstado(p) === 'publicado').length;
         const vistas = properties.reduce((acc, p) => acc + (p.vistas || p.visualizaciones || 0), 0);
         return { total, publicados, vistas };
     }, [properties]);
@@ -42,20 +50,23 @@ export default function DashboardClient({ user, profile, properties, isFirstTime
     const filteredProperties = useMemo(() => {
         if (currentFilter === 'todos') return properties;
         return properties.filter(p => {
-            const estado = p.estado?.toLowerCase() || 'borrador';
+            const estado = getEffectiveEstado(p);
             if (currentFilter === 'borrador') return estado === 'borrador';
             return estado === currentFilter;
         });
     }, [properties, currentFilter]);
 
     // Helpers
-    const getStatusBadge = (estado: string | null) => {
-        const status = estado?.toLowerCase() || 'borrador';
+    const getStatusBadge = (estado: string | null, p?: any) => {
+        // Use effective estado to catch zombie properties
+        const status = p ? getEffectiveEstado(p) : (estado?.toLowerCase() || 'borrador');
         switch (status) {
             case 'publicado':
                 return { label: 'PUBLICADO', classes: 'bg-emerald-500/90 border-emerald-400/50' };
             case 'en_revision':
                 return { label: 'EN REVISIÓN', classes: 'bg-amber-500/90 border-amber-400/50' };
+            case 'expirado':
+                return { label: 'EXPIRADO', classes: 'bg-red-500/90 border-red-400/50' };
             default:
                 return { label: 'BORRADOR', classes: 'bg-slate-500/90 border-slate-400/50' };
         }
@@ -144,7 +155,8 @@ export default function DashboardClient({ user, profile, properties, isFirstTime
                         { id: 'todos', label: 'Todas las propiedades' },
                         { id: 'publicado', label: 'Publicadas' },
                         { id: 'en_revision', label: 'En revisión' },
-                        { id: 'borrador', label: 'Borradores' }
+                        { id: 'borrador', label: 'Borradores' },
+                        { id: 'expirado', label: 'Expiradas' }
                     ].map((tab) => (
                         <button
                             key={tab.id}
@@ -167,7 +179,7 @@ export default function DashboardClient({ user, profile, properties, isFirstTime
             {filteredProperties.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 w-full max-w-6xl">
                     {filteredProperties.map(p => {
-                        const badge = getStatusBadge(p.estado);
+                        const badge = getStatusBadge(p.estado, p);
                         const coverUrl = getCoverImage(p);
                         const isEnRevision = p.estado === 'en_revision';
 
