@@ -338,10 +338,28 @@ async function verifyByDraftId(draftId: string): Promise<VerifyPaymentResult> {
         return { success: false, error: 'Propiedad no encontrada' };
     }
 
-    // Idempotency: if already processed, verify a real payment exists before confirming
+    // Idempotency: if already processed, verify a real payment OR credit exists before confirming
     if (property.estado === 'en_revision' || property.estado === 'publicado') {
-        console.log('🔍 [VerifyByDraftId] Property state is:', property.estado, '— verifying payment record...');
+        console.log('🔍 [VerifyByDraftId] Property state is:', property.estado, '— verifying records...');
 
+        // ═══════════════════════════════════════════════════════════════
+        // PATH A: Wallet/Credit-based publication (PLG Freemium)
+        // publishWithCredits creates listing_credits, NOT pagos
+        // ═══════════════════════════════════════════════════════════════
+        const { data: credit } = await supabase
+            .from('listing_credits')
+            .select('id')
+            .eq('inmueble_id', draftId)
+            .maybeSingle();
+
+        if (credit) {
+            console.log('✅ [VerifyByDraftId] Confirmed listing credit exists:', credit.id);
+            return { success: true, status: 'APPROVED', propertyId: draftId };
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // PATH B: Wompi payment-based publication (legacy/paid plans)
+        // ═══════════════════════════════════════════════════════════════
         const { data: confirmedPayment } = await supabase
             .from('pagos')
             .select('id')
@@ -354,8 +372,8 @@ async function verifyByDraftId(draftId: string): Promise<VerifyPaymentResult> {
             return { success: true, status: 'APPROVED', propertyId: draftId };
         }
 
-        // No approved payment found — fall through to normal verification
-        console.warn('⚠️ [VerifyByDraftId] Property in', property.estado, 'but NO approved payment — continuing verification...');
+        // No credit or payment found — fall through to Wompi polling
+        console.warn('⚠️ [VerifyByDraftId] Property in', property.estado, 'but NO credit or payment — continuing verification...');
     }
 
     // ═══════════════════════════════════════════════════════════════

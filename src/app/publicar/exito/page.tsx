@@ -11,8 +11,8 @@ function LoadingState() {
         <div className="min-h-screen flex items-center justify-center bg-gray-50">
             <div className="text-center">
                 <div className="w-16 h-16 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                <h2 className="text-xl font-semibold text-gray-700">Verificando pago...</h2>
-                <p className="text-gray-500">Estamos confirmando la transacción con el banco.</p>
+                <h2 className="text-xl font-semibold text-gray-700">Verificando publicación...</h2>
+                <p className="text-gray-500">Estamos confirmando tu publicación.</p>
             </div>
         </div>
     );
@@ -65,7 +65,7 @@ function ExitoContent() {
                     </div>
 
                     <h1 className="text-3xl font-bold text-gray-900 mb-2">
-                        ¡Pago Exitoso!
+                        ¡Publicación Exitosa!
                     </h1>
                     <p className="text-gray-600 mb-8">
                         Tu inmueble ha pasado a estado <strong>En Revisión</strong>. Recibirás una notificación cuando sea publicado.
@@ -96,11 +96,13 @@ function ExitoContent() {
                 </div>
                 <h2 className="text-2xl font-bold text-gray-900 mb-2">Hubo un problema</h2>
                 <p className="text-gray-600 mb-6">
-                    {status?.error || 'No pudimos verificar el pago automáticamente.'}
+                    {status?.error || 'No pudimos verificar la publicación automáticamente.'}
                 </p>
-                <p className="text-sm text-gray-400 mb-6 font-mono bg-gray-100 p-2 rounded">
-                    Ref: {transactionId || '---'}
-                </p>
+                {transactionId && (
+                    <p className="text-sm text-gray-400 mb-6 font-mono bg-gray-100 p-2 rounded">
+                        Ref: {transactionId}
+                    </p>
+                )}
                 <Link
                     href="/mis-inmuebles"
                     className="block w-full bg-gray-900 text-white font-bold py-3 px-4 rounded-xl hover:bg-gray-800 transition"
