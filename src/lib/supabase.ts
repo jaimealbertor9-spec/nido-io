@@ -16,14 +16,14 @@ export const supabase = createBrowserClient<Database>(supabaseUrl, supabaseAnonK
 // DEFINICIONES DE TIPOS Y UTILIDADES (Agregado para PropertyCard)
 // ==========================================
 
-export type EstadoInmueble = 'borrador' | 'publicado' | 'vendido' | 'alquilado' | 'en_revision' | 'pausado' | 'pendiente_pago' | 'expirado' | 'rechazado';
+// DB CHECK constraint: borrador | en_revision | pendiente_verificacion | publicado | rechazado | vendido | arrendado | inactivo
+export type EstadoInmueble = 'borrador' | 'en_revision' | 'pendiente_verificacion' | 'publicado' | 'rechazado' | 'vendido' | 'arrendado' | 'inactivo';
 
 export interface Inmueble {
     id: string;
     titulo: string;
     descripcion?: string;
     precio: number;
-    ubicacion?: string;
     ciudad?: string;
     estado: EstadoInmueble;
     tipo_negocio: string;
@@ -39,13 +39,15 @@ export interface Inmueble {
     amenities?: string[];
     servicios?: string[];
     video_url?: string;
-    tour_virtual_url?: string;
-    anio_construccion?: number;
-    piso?: number;
+    video_file?: string;
     administracion?: number;
+    fecha_publicacion?: string;
+    fecha_expiracion?: string;
+    es_propietario?: boolean;
     created_at: string;
     updated_at: string;
     propietario_id: string;
+    pago_id?: string;
     // Relación con imágenes
     inmueble_imagenes?: { url: string }[];
 }

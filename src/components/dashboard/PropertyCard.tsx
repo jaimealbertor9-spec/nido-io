@@ -4,31 +4,23 @@ interface PropertyCardProps {
     inmueble: Inmueble;
 }
 
-// Status badge configuration
+// Status badge configuration — matches DB CHECK constraint exactly
 const statusConfig: Record<EstadoInmueble, { label: string; className: string }> = {
-    publicado: {
-        label: 'Publicado',
-        className: 'bg-nido-100 text-nido-700 border-nido-200',
-    },
     borrador: {
         label: 'Borrador',
         className: 'bg-accent-100 text-accent-700 border-accent-200',
-    },
-    pendiente_pago: {
-        label: 'Pendiente Pago',
-        className: 'bg-orange-100 text-orange-700 border-orange-200',
     },
     en_revision: {
         label: 'En Revisión',
         className: 'bg-amber-100 text-amber-700 border-amber-200',
     },
-    pausado: {
-        label: 'Pausado',
-        className: 'bg-gray-100 text-gray-600 border-gray-200',
+    pendiente_verificacion: {
+        label: 'Pendiente Verificación',
+        className: 'bg-orange-100 text-orange-700 border-orange-200',
     },
-    expirado: {
-        label: 'Expirado',
-        className: 'bg-red-100 text-red-700 border-red-200',
+    publicado: {
+        label: 'Publicado',
+        className: 'bg-nido-100 text-nido-700 border-nido-200',
     },
     rechazado: {
         label: 'Rechazado',
@@ -38,9 +30,13 @@ const statusConfig: Record<EstadoInmueble, { label: string; className: string }>
         label: 'Vendido',
         className: 'bg-emerald-100 text-emerald-700 border-emerald-200',
     },
-    alquilado: {
-        label: 'Alquilado',
+    arrendado: {
+        label: 'Arrendado',
         className: 'bg-blue-100 text-blue-700 border-blue-200',
+    },
+    inactivo: {
+        label: 'Inactivo',
+        className: 'bg-gray-100 text-gray-600 border-gray-200',
     },
 };
 
