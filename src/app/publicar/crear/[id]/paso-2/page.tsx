@@ -25,7 +25,8 @@ import {
     getUserVerificationApprovalStatus,
     type UserVerificationStatusResult
 } from '@/app/actions/inmuebleVerification';
-import { initiatePaymentSession } from '@/app/actions/payment';
+import { getUserPublishContext, type PublishContext } from '@/app/actions/publishContext';
+import { publishWithCredits } from '@/app/actions/publishWithCredits';
 import StepFotos from '@/components/publicar/StepFotos';
 import InmuebleVerificationForm from '@/components/IdentityVerificationForm';
 
@@ -108,10 +109,10 @@ export default function Paso2Page() {
     const [isUploadingVideo, setIsUploadingVideo] = useState(false);
     const [videoError, setVideoError] = useState<string | null>(null);
 
-    // Payment States
-    const [isInitiatingPayment, setIsInitiatingPayment] = useState(false);
+    // Publish/CTA States
+    const [isPublishing, setIsPublishing] = useState(false);
     const [inmuebleEstado, setInmuebleEstado] = useState<string>('borrador');
-    const [showPaymentSuccessMessage, setShowPaymentSuccessMessage] = useState(false);
+    const [publishContext, setPublishContext] = useState<PublishContext | null>(null);
 
     // Refs
     const hasLoadedRef = useRef(false);
@@ -208,6 +209,10 @@ export default function Paso2Page() {
 
                     setDocuments(docs);
                     setUserVerificationApproval(approval);
+
+                    // ── GROUP 3: Fetch publish context (wallet/credits) ──
+                    const ctx = await getUserPublishContext(user.id);
+                    if (!cancelled) setPublishContext(ctx);
                 }
 
                 hasLoadedRef.current = true;
@@ -416,54 +421,68 @@ export default function Paso2Page() {
     };
 
     // ═══════════════════════════════════════════════════════════════
-    // PAYMENT HANDLER
+    // PUBLISH HANDLER — PLG Freemium Logic
     // ═══════════════════════════════════════════════════════════════
-    const handlePayment = async () => {
-        console.log('💰 [Wompi] Starting payment process...');
+    const handlePublish = async () => {
+        console.log('🚀 [Publish] Starting publish process...');
+        console.log('[Publish] Context:', publishContext?.type);
 
         if (getMissingFields().length > 0) {
             setError('Faltan campos obligatorios');
             return;
         }
 
-        if (!process.env.NEXT_PUBLIC_WOMPI_PUBLIC_KEY) {
-            console.error('❌ [Wompi] Missing NEXT_PUBLIC_WOMPI_PUBLIC_KEY');
-            alert('Falta configuración de pagos (Public Key)');
+        if (!userId) {
+            setError('No se encontró tu sesión. Recarga la página.');
             return;
         }
 
-        setIsInitiatingPayment(true);
+        setIsPublishing(true);
         setError(null);
 
         try {
-            console.log('📝 [Wompi] Saving property data before payment...');
+            // Step 1: Save all form data first
+            console.log('📝 [Publish] Saving property data...');
             const { error: updateError } = await supabase
                 .from('inmuebles')
                 .update(getFormPayload())
                 .eq('id', propertyId);
 
             if (updateError) throw new Error(`Error guardando datos: ${updateError.message}`);
-            console.log('✅ [Wompi] Property data saved successfully');
+            console.log('✅ [Publish] Property data saved.');
 
-            console.log('🔐 [Wompi] Generating integrity signature...');
-            const res = await initiatePaymentSession(
+            // Step 2: Route based on publish context
+            if (!publishContext || publishContext.type === 'FREE_EXHAUSTED') {
+                // No credits available — send to plans page
+                console.log('💳 [Publish] No credits — redirecting to plans...');
+                window.location.href = `/publicar/planes/${propertyId}`;
+                return;
+            }
+
+            // FIRST_TIMER or HAS_CREDITS — publish instantly
+            const walletId = publishContext.type === 'HAS_CREDITS' ? publishContext.walletId : undefined;
+            const subscriptionId = publishContext.type === 'HAS_CREDITS' ? publishContext.subscriptionId : undefined;
+
+            console.log('📦 [Publish] Calling publishWithCredits...');
+            const result = await publishWithCredits(
                 propertyId,
-                userEmail!,
-                userId!,
-                `${window.location.origin}/publicar/exito?draftId=${propertyId}`
+                userId,
+                walletId,
+                subscriptionId,
             );
 
-            if (!res.success) throw new Error(res.error || 'Error iniciando sesión de pago');
-            if (!res.data?.checkoutUrl) throw new Error('No se recibió URL de pago de Wompi');
+            if (!result.success) {
+                throw new Error(result.error || 'Error al publicar el inmueble');
+            }
 
-            console.log('🚀 [Wompi] Redirecting to:', res.data.checkoutUrl);
-            window.location.href = res.data.checkoutUrl;
+            console.log('🎉 [Publish] Success! Redirecting to success page...');
+            window.location.href = `/publicar/exito?draftId=${propertyId}`;
 
         } catch (e: any) {
-            console.error('❌ [Wompi] Payment error:', e);
-            setError(e.message || 'Error procesando el pago. Intenta nuevamente.');
+            console.error('❌ [Publish] Error:', e);
+            setError(e.message || 'Error publicando el inmueble. Intenta nuevamente.');
         } finally {
-            setIsInitiatingPayment(false);
+            setIsPublishing(false);
         }
     };
 
@@ -996,12 +1015,32 @@ export default function Paso2Page() {
 
                 {inmuebleEstado === 'borrador' ? (
                     <button
-                        onClick={handlePayment}
-                        disabled={isInitiatingPayment || getMissingFields().length > 0}
-                        className={`px-6 py-2.5 rounded-lg text-white font-medium flex items-center gap-2 transition-all ${getMissingFields().length > 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 shadow-lg shadow-green-500/25'}`}
+                        onClick={handlePublish}
+                        disabled={isPublishing || getMissingFields().length > 0}
+                        className={`px-6 py-2.5 rounded-lg text-white font-medium flex items-center gap-2 transition-all ${getMissingFields().length > 0
+                            ? 'bg-gray-300 cursor-not-allowed'
+                            : publishContext?.type === 'FIRST_TIMER'
+                                ? 'bg-green-600 hover:bg-green-700 shadow-lg shadow-green-500/25'
+                                : publishContext?.type === 'HAS_CREDITS'
+                                    ? 'bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-500/25'
+                                    : 'bg-amber-600 hover:bg-amber-700 shadow-lg shadow-amber-500/25'
+                            }`}
                     >
-                        {isInitiatingPayment ? <Loader2 className="animate-spin" size={18} /> : <CreditCard size={18} />}
-                        Pagar y Publicar
+                        {isPublishing ? (
+                            <Loader2 className="animate-spin" size={18} />
+                        ) : publishContext?.type === 'FIRST_TIMER' ? (
+                            <Check size={18} />
+                        ) : publishContext?.type === 'HAS_CREDITS' ? (
+                            <Check size={18} />
+                        ) : (
+                            <CreditCard size={18} />
+                        )}
+                        {publishContext?.type === 'FIRST_TIMER'
+                            ? '🎉 Publicar Gratis'
+                            : publishContext?.type === 'HAS_CREDITS'
+                                ? `✨ Usar Crédito y Publicar`
+                                : '💳 Ver Planes y Publicar'
+                        }
                     </button>
                 ) : (
                     <div className="flex flex-col items-end gap-3">

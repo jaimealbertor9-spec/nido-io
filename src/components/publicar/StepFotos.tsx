@@ -218,6 +218,11 @@ export default function StepFotos({ inmuebleId, habitaciones = 0, banos = 0, onN
 
             const result = await uploadPropertyImage(formData)
 
+            if (!result) {
+                setUploadError('Error de conexión al subir la foto. Intenta de nuevo.')
+                return
+            }
+
             if (result.success) {
                 setUploadedPhotos(prev => ({
                     ...prev,
@@ -281,6 +286,11 @@ export default function StepFotos({ inmuebleId, habitaciones = 0, banos = 0, onN
             formData.append('category', tag)
 
             const result = await uploadPropertyImage(formData)
+
+            if (!result) {
+                setUploadError('Error de conexión al subir la foto extra. Intenta de nuevo.')
+                return
+            }
 
             if (result.success) {
                 setExtraPhotos(prev => [...prev, { tag, url: result.url!, imageId: result.imageId }])
