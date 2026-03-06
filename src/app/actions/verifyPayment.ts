@@ -241,7 +241,6 @@ async function processTransactionStatus(
         console.log('✅ [Update] Status APPROVED. Starting updates...');
 
         // 1. ACTUALIZAR TABLA PAGOS (Simplificado para evitar Error 400)
-        // Solo guardamos datos esenciales en el JSON si es muy complejo
         const safeTransactionData = {
             id: transactionData.id,
             status: transactionData.status,
@@ -255,33 +254,115 @@ async function processTransactionStatus(
             .update({
                 estado: 'aprobado',
                 wompi_transaction_id: transactionId,
-                datos_transaccion: safeTransactionData, // Guardamos versión limpia
+                datos_transaccion: safeTransactionData,
                 updated_at: new Date().toISOString()
             })
             .eq('referencia_pedido', reference);
 
         if (payError) {
             console.error('❌ Error updating pagos:', payError);
-            // NO RETORNAMOS ERROR AQUÍ para intentar salvar el inmueble al menos
         } else {
             console.log('💳 [Update] Pagos table updated successfully');
         }
 
-        // Recuperar el ID del pago (consulta separada para evitar conflictos de retorno)
-        const { data: pagoExistente } = await supabase
+        // Recuperar el pago completo (necesitamos usuario_id y datos originales)
+        const { data: pagoCompleto } = await supabase
             .from('pagos')
-            .select('id')
+            .select('id, usuario_id, inmueble_id, datos_transaccion')
             .eq('referencia_pedido', reference)
             .single();
 
-        const finalPagoId = pagoExistente?.id;
+        const finalPagoId = pagoCompleto?.id;
+        const payerUserId = pagoCompleto?.usuario_id;
+        const storedData = pagoCompleto?.datos_transaccion as any;
+        const packageSlug = storedData?.package_slug;
 
-        // 2. CALCULAR FECHAS
+        // ═══════════════════════════════════════════════════════════════
+        // 2. MINT WALLET & CREDITS (Payment-to-Wallet Bridge)
+        // ═══════════════════════════════════════════════════════════════
+        let duracionDias = 30; // default fallback
+
+        if (packageSlug && payerUserId) {
+            console.log('📦 [Bridge] Package slug from payment:', packageSlug);
+
+            // Fetch the package details
+            const { data: pkg } = await supabase
+                .from('packages')
+                .select('id, creditos, duracion_anuncio_dias, features')
+                .eq('slug', packageSlug)
+                .single();
+
+            if (pkg) {
+                duracionDias = pkg.duracion_anuncio_dias || 30;
+                console.log('📦 [Bridge] Package found:', packageSlug, '| Credits:', pkg.creditos, '| Duration:', duracionDias, 'days');
+
+                // ─── Idempotency Guard ───
+                // Check if a wallet was already minted for this pago
+                const { data: existingWallet } = await supabase
+                    .from('user_wallets')
+                    .select('id')
+                    .eq('user_id', payerUserId)
+                    .eq('package_id', pkg.id)
+                    .order('created_at', { ascending: false })
+                    .limit(1)
+                    .maybeSingle();
+
+                if (existingWallet) {
+                    console.log('⚠️ [Bridge] Wallet already exists for this user+package, skipping mint:', existingWallet.id);
+                } else {
+                    // ─── Mint user_wallets ───
+                    const { data: newWallet, error: walletErr } = await supabase
+                        .from('user_wallets')
+                        .insert({
+                            user_id: payerUserId,
+                            package_id: pkg.id,
+                            creditos_total: pkg.creditos,
+                            creditos_usados: 1, // First property auto-consumed
+                        })
+                        .select('id')
+                        .single();
+
+                    if (walletErr || !newWallet) {
+                        console.error('❌ [Bridge] Failed to create wallet:', walletErr);
+                    } else {
+                        console.log('✅ [Bridge] Wallet minted:', newWallet.id, '| Credits:', pkg.creditos, '(1 used)');
+
+                        // ─── Mint listing_credits ───
+                        const now = new Date();
+                        const expiration = new Date(now);
+                        expiration.setDate(expiration.getDate() + duracionDias);
+
+                        const { error: lcError } = await supabase
+                            .from('listing_credits')
+                            .insert({
+                                user_id: payerUserId,
+                                inmueble_id: propertyId,
+                                wallet_id: newWallet.id,
+                                features_snapshot: pkg.features || {},
+                                fecha_publicacion: now.toISOString(),
+                                fecha_expiracion: expiration.toISOString(),
+                            });
+
+                        if (lcError) {
+                            console.error('❌ [Bridge] Failed to create listing_credit:', lcError);
+                        } else {
+                            console.log('✅ [Bridge] Listing credit minted for property:', propertyId);
+                        }
+                    }
+                }
+            } else {
+                console.warn('⚠️ [Bridge] Package not found for slug:', packageSlug, '— using default 30-day expiration');
+            }
+        } else {
+            console.warn('⚠️ [Bridge] No package_slug in payment data — legacy flow, using 30-day default');
+        }
+
+        // 3. CALCULAR FECHAS (using dynamic duration from package)
         const fechaPublicacion = new Date();
         const fechaExpiracion = new Date();
-        fechaExpiracion.setDate(fechaExpiracion.getDate() + 30);
+        fechaExpiracion.setDate(fechaExpiracion.getDate() + duracionDias);
 
-        // 3. ACTUALIZAR INMUEBLE
+        // 4. ACTUALIZAR INMUEBLE
         const { error: propError } = await supabase
             .from('inmuebles')
             .update({

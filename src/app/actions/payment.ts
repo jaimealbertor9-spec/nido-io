@@ -180,7 +180,8 @@ export async function initiatePaymentSession(
                     user_email: userEmail,
                     wompi_link_id: wompiData.data.id,
                     redirect_url: redirectUrl,
-                    signature: signature
+                    signature: signature,
+                    package_slug: packageSlug || null
                 }
             });
 
