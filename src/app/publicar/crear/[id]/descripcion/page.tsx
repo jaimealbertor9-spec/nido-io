@@ -120,9 +120,15 @@ export default function DetallesYPrecioPage() {
                 return;
             }
 
-            // 2. Call the AI generation action
-            // This now throws on error instead of returning empty values
-            const result = await generatePropertyDescription(features);
+            // 2. Call the AI generation action with timeout protection
+            // Vercel serverless functions can timeout (10-15s)
+            const timeoutPromise = new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('TIMEOUT')), 15000)
+            );
+            const result = await Promise.race([
+                generatePropertyDescription(features),
+                timeoutPromise
+            ]);
 
             if (result.titulo && result.descripcion) {
                 setTitle(result.titulo);
@@ -133,15 +139,14 @@ export default function DetallesYPrecioPage() {
                 setError('La IA no pudo generar el contenido. Intenta de nuevo.');
             }
         } catch (err: any) {
-            // ═══════════════════════════════════════════════════════════
-            // DISPLAY THE ACTUAL SERVER ERROR MESSAGE
-            // This exposes API key issues, quota limits, region blocks, etc.
-            // ═══════════════════════════════════════════════════════════
             console.error('Error in magic generation:', err);
 
-            // Use the actual error message from the server action
-            const errorMessage = err?.message || 'Error inesperado al generar.';
-            setError(errorMessage);
+            if (err?.message === 'TIMEOUT') {
+                setError('La IA está tardando mucho. Por favor intenta de nuevo en unos segundos.');
+            } else {
+                const errorMessage = err?.message || 'Error inesperado al generar.';
+                setError(errorMessage);
+            }
         } finally {
             setIsMagicGenerating(false);
         }

@@ -740,12 +740,25 @@ export default function Paso2Page() {
                         try {
                             const f = await getPropertyFeatures(propertyId);
                             if (!f) throw new Error('No se pudieron obtener las características del inmueble. Completa el Paso 1 primero.');
-                            const res = await generatePropertyDescription(f);
+
+                            // Timeout wrapper — Vercel serverless functions can timeout (10-15s)
+                            const timeoutPromise = new Promise<never>((_, reject) =>
+                                setTimeout(() => reject(new Error('TIMEOUT')), 15000)
+                            );
+                            const res = await Promise.race([
+                                generatePropertyDescription(f),
+                                timeoutPromise
+                            ]);
+
                             if (res.titulo) { setTitle(res.titulo); autoSaveField('titulo', res.titulo); }
                             if (res.descripcion) { setDescription(res.descripcion); autoSaveField('descripcion', res.descripcion); }
                         } catch (err: any) {
                             console.error('❌ [AI Generation Error]:', err);
-                            setError(err?.message || 'Error al generar descripción con IA. Intenta de nuevo.');
+                            if (err?.message === 'TIMEOUT') {
+                                setError('La IA está tardando mucho. Por favor intenta de nuevo en unos segundos.');
+                            } else {
+                                setError(err?.message || 'Error al generar descripción con IA. Intenta de nuevo.');
+                            }
                         } finally {
                             setIsGenerating(false);
                         }

@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { getUserPublishContext, getPackages, type PublishContext, type PackageInfo } from '@/app/actions/publishContext';
 import { publishWithCredits } from '@/app/actions/publishWithCredits';
+import { initiatePaymentSession } from '@/app/actions/payment';
 import { supabase } from '@/lib/supabase';
 
 const fredoka = Fredoka({
@@ -97,6 +98,8 @@ export default function PlanSelectionPage() {
     const [isPublishing, setIsPublishing] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [userId, setUserId] = useState<string | null>(null);
+    const [userEmail, setUserEmail] = useState<string | null>(null);
+    const [isRedirectingToPay, setIsRedirectingToPay] = useState(false);
 
     // ─────────────────────────────────────────────────────────────────────
     // Load user context and packages on mount
@@ -112,6 +115,7 @@ export default function PlanSelectionPage() {
                 }
 
                 setUserId(user.id);
+                setUserEmail(user.email || null);
 
                 const [ctx, pkgs] = await Promise.all([
                     getUserPublishContext(user.id),
@@ -156,15 +160,42 @@ export default function PlanSelectionPage() {
     // ─────────────────────────────────────────────────────────────────────
     // Handle paid plan click — redirect to Wompi
     // ─────────────────────────────────────────────────────────────────────
-    const handlePaidPlan = (pkg: PackageInfo) => {
-        if (!userId || !pkg.wompi_payment_link_url) return;
+    const handlePaidPlan = async (pkg: PackageInfo) => {
+        if (!userId || !userEmail) {
+            setError('No se encontró tu sesión. Recarga la página.');
+            return;
+        }
 
-        const userShort = userId.substring(0, 8);
-        const ref = `NIDO-PKG-${pkg.slug}-${userShort}`;
+        setIsRedirectingToPay(true);
+        setError(null);
 
-        // Redirect via server-side API to avoid localhost origin blocks from WAF
-        const checkoutUrl = `/api/checkout?link=${encodeURIComponent(pkg.wompi_payment_link_url)}&reference=${encodeURIComponent(ref)}`;
-        window.location.href = checkoutUrl;
+        try {
+            const redirectUrl = `${window.location.origin}/publicar/exito?draftId=${draftId}`;
+
+            const result = await initiatePaymentSession(
+                draftId,
+                userEmail,
+                userId,
+                redirectUrl,
+                pkg.precio_cop,      // dynamic amount from packages table
+                pkg.slug             // package identifier
+            );
+
+            if (!result.success) {
+                throw new Error(result.error || 'Error creando sesión de pago');
+            }
+
+            if (!result.data?.checkoutUrl) {
+                throw new Error('No se recibió URL de pago');
+            }
+
+            console.log('🚀 [Planes] Redirecting to Wompi:', result.data.checkoutUrl);
+            window.location.href = result.data.checkoutUrl;
+        } catch (err: any) {
+            console.error('❌ [Planes] Payment error:', err);
+            setError(err.message || 'Error procesando el pago');
+            setIsRedirectingToPay(false);
+        }
     };
 
     // ─────────────────────────────────────────────────────────────────────
@@ -399,13 +430,21 @@ export default function PlanSelectionPage() {
                                                     'Publicar gratis'
                                                 )}
                                             </button>
-                                        ) : isPaid && pkg.wompi_payment_link_url ? (
+                                        ) : isPaid ? (
                                             <button
                                                 onClick={() => handlePaidPlan(pkg)}
-                                                className="w-full py-3 px-4 rounded-full font-bold text-sm bg-gradient-to-r from-green-500 to-emerald-600 text-white shadow-lg hover:shadow-xl hover:scale-[1.02] transition-all duration-300 flex items-center justify-center gap-2"
+                                                disabled={isRedirectingToPay}
+                                                className={`w-full py-3 px-4 rounded-full font-bold text-sm transition-all duration-300 flex items-center justify-center gap-2 ${isRedirectingToPay
+                                                        ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                                                        : 'bg-gradient-to-r from-green-500 to-emerald-600 text-white shadow-lg hover:shadow-xl hover:scale-[1.02]'
+                                                    }`}
                                             >
-                                                <CreditCard className="w-4 h-4" />
-                                                Comprar {formatCOP(pkg.precio_cop)}
+                                                {isRedirectingToPay ? (
+                                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                                ) : (
+                                                    <CreditCard className="w-4 h-4" />
+                                                )}
+                                                {isRedirectingToPay ? 'Creando sesión...' : `Comprar ${formatCOP(pkg.precio_cop)}`}
                                             </button>
                                         ) : (
                                             <div className="text-center py-3 px-4 rounded-full bg-gray-100 text-gray-400 font-semibold text-sm">

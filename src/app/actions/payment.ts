@@ -3,7 +3,6 @@
 import { createHash } from 'crypto';
 import { getServiceRoleClient } from '@/lib/supabase-admin';
 
-const AMOUNT_IN_CENTS = 1000000; // $10,000 COP
 const CURRENCY = 'COP';
 
 // Wompi API endpoints - Detect based on key prefix, NOT NODE_ENV
@@ -34,7 +33,9 @@ export async function initiatePaymentSession(
     propertyId: string,
     userEmail: string,
     userId: string,
-    customRedirectUrl?: string
+    customRedirectUrl?: string,
+    amountCOP?: number,
+    packageSlug?: string
 ) {
     try {
         // ========================================
@@ -111,10 +112,10 @@ export async function initiatePaymentSession(
         // Using privateKey, publicKey, integritySecret from the top
 
         const reference = generateReference(propertyId);
-        const amountInCentsInt = Math.round(Number(AMOUNT_IN_CENTS));
+        const finalAmountCents = amountCOP ? Math.round(amountCOP * 100) : 1000000; // default $10K COP
 
         // 5. Generate integrity signature
-        const signatureChain = `${reference}${amountInCentsInt}${CURRENCY}${integritySecret}`;
+        const signatureChain = `${reference}${finalAmountCents}${CURRENCY}${integritySecret}`;
         const signature = createHash('sha256').update(signatureChain).digest('hex');
         console.log('🔐 [Payment] Signature generated for reference:', reference);
 
@@ -128,12 +129,12 @@ export async function initiatePaymentSession(
         console.log('📡 [Payment] Calling Wompi Payment Links API...');
 
         const paymentLinkPayload: any = {
-            name: `Publicación - ${propertyData?.titulo?.substring(0, 30) || propertyId.substring(0, 8)}`,
-            description: 'Publicación de inmueble en Nido.io',
+            name: `Nido ${packageSlug ? packageSlug.charAt(0).toUpperCase() + packageSlug.slice(1) : 'Publicación'} - ${propertyData?.titulo?.substring(0, 30) || propertyId.substring(0, 8)}`,
+            description: `Publicación de inmueble en Nido.io${packageSlug ? ` (Plan ${packageSlug})` : ''}`,
             single_use: true,
             collect_shipping: false,
             currency: CURRENCY,
-            amount_in_cents: amountInCentsInt,
+            amount_in_cents: finalAmountCents,
             redirect_url: redirectUrl
         };
 
@@ -172,7 +173,7 @@ export async function initiatePaymentSession(
                 usuario_id: userId,
                 inmueble_id: propertyId,
                 referencia_pedido: reference,
-                monto: amountInCentsInt / 100,
+                monto: finalAmountCents / 100,
                 estado: 'pendiente',
                 metodo_pago: 'wompi_link',
                 datos_transaccion: {
