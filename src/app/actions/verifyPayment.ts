@@ -74,75 +74,55 @@ export async function verifyWompiTransaction(
         let propertyId = pagoLocal?.inmueble_id;
 
         // ═══════════════════════════════════════════════════════════════
-        // FIX: Use draftId (from URL passthrough) as PRIMARY source
-        // Only fall back to parsing reference if draftId not available
+        // ADOPT PATTERN (Unified with route.ts webhook logic)
+        // When Wompi's phantom reference (test_...) doesn't match our
+        // internal reference (NIDO-...), find the orphaned PENDING row
+        // by draftId and UPDATE it — NEVER blindly INSERT.
         // ═══════════════════════════════════════════════════════════════
-        if (!propertyId) {
-            console.log('⚠️ [Verify] No local record found. Looking for property...');
+        if (!propertyId && draftId) {
+            console.log('⚠️ [Verify] No local record found for Wompi reference. Attempting Adopt Pattern for draftId:', draftId);
 
-            // PRIORITY 1: Use passed draftId from URL
-            if (draftId) {
-                console.log('📋 [Verify] Using draftId from URL passthrough:', draftId);
+            // Find the orphaned PENDING row created by payment.ts
+            const { data: orphanedPago } = await supabase
+                .from('pagos')
+                .select('id, referencia_pedido, datos_transaccion')
+                .eq('inmueble_id', draftId)
+                .eq('estado', 'pendiente')
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
 
-                // Verify the property exists
-                const { data: propertyMatch, error: propError } = await supabase
-                    .from('inmuebles')
-                    .select('id, propietario_id')
-                    .eq('id', draftId)
-                    .single();
+            if (orphanedPago) {
+                console.log('📋 [Verify] Found orphaned pending row:', orphanedPago.id, '| Original ref:', orphanedPago.referencia_pedido);
 
-                if (propertyMatch) {
-                    propertyId = propertyMatch.id;
-                    console.log('✅ [Verify] Found property via draftId:', propertyId);
+                // ADOPT: UPDATE the orphaned row to link Wompi's phantom reference
+                // .eq('estado', 'pendiente') is the atomic lock — prevents double-adoption
+                const { data: adoptedRow } = await supabase
+                    .from('pagos')
+                    .update({
+                        referencia_pedido: reference,
+                        wompi_transaction_id: transactionId,
+                        updated_at: new Date().toISOString()
+                    })
+                    .eq('id', orphanedPago.id)
+                    .eq('estado', 'pendiente')   // ← ATOMIC LOCK on adopt
+                    .select('id');
 
-                    // Create the missing payment record
-                    const { error: insertError } = await supabase
-                        .from('pagos')
-                        .insert({
-                            usuario_id: propertyMatch.propietario_id,
-                            inmueble_id: propertyId,
-                            referencia_pedido: reference,
-                            monto: (transaction.amount_in_cents || 1000000) / 100,
-                            estado: 'pendiente',
-                            metodo_pago: 'wompi_link',
-                            wompi_transaction_id: transactionId,
-                            datos_transaccion: {
-                                created_from_wompi: true,
-                                created_via: 'draftId_passthrough',
-                                wompi_status: wompiStatus,
-                                amount_in_cents: transaction.amount_in_cents
-                            }
-                        });
-
-                    if (insertError) {
-                        console.error('❌ [Verify] Failed to create payment record:', insertError);
-                    } else {
-                        console.log('✅ [Verify] Created missing payment record for property:', propertyId);
-                    }
-                } else {
-                    console.error('❌ [Verify] Property not found for draftId:', draftId);
+                if (!adoptedRow || adoptedRow.length === 0) {
+                    // Race lost: webhook or another thread already adopted this row
+                    console.log('ℹ️ [Verify] Adoption race lost — another thread already adopted this row.');
+                    return { success: true, status: 'APPROVED', propertyId: draftId };
                 }
-            }
 
-            // PRIORITY 2: Try parsing reference (legacy fallback)
-            if (!propertyId && reference) {
-                const refParts = reference.split('-');
-                if (refParts.length >= 2 && refParts[0] === 'NIDO') {
-                    const shortPropertyId = refParts[1];
-                    console.log('🔍 [Verify] Trying to match property from reference:', shortPropertyId);
-
-                    const { data: propertyMatch } = await supabase
-                        .from('inmuebles')
-                        .select('id, propietario_id')
-                        .ilike('id', `${shortPropertyId}%`)
-                        .limit(1)
-                        .single();
-
-                    if (propertyMatch) {
-                        propertyId = propertyMatch.id;
-                        console.log('✅ [Verify] Found property via reference parsing:', propertyId);
-                    }
-                }
+                console.log('✅ [Verify] Adopted orphaned row:', adoptedRow[0].id, '| New ref:', reference);
+                propertyId = draftId;
+            } else {
+                // FAIL-CLOSED: No pending row exists to adopt. Do NOT INSERT.
+                console.error('❌ [Verify] No pending payment row to adopt for draftId:', draftId);
+                return {
+                    success: false,
+                    error: 'No se encontró un registro de pago pendiente. Contacta soporte con referencia: ' + reference
+                };
             }
         }
 
