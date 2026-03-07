@@ -226,7 +226,10 @@ export async function verifyPaymentByReference(reference: string): Promise<Verif
 }
 
 /**
- * LÓGICA CENTRAL DE ACTUALIZACIÓN (BLINDADA)
+ * LÓGICA CENTRAL DE ACTUALIZACIÓN — BLINDADA v2
+ * Single Source of Truth for payment approval.
+ * Called by BOTH the browser redirect AND the Wompi Webhook.
+ * Implements an atomic lock to prevent race condition duplicates.
  */
 async function processTransactionStatus(
     status: string,
@@ -238,9 +241,9 @@ async function processTransactionStatus(
     const supabase = getServiceRoleClient();
 
     if (status === 'APPROVED') {
-        console.log('✅ [Update] Status APPROVED. Starting updates...');
+        console.log('✅ [Update] Status APPROVED. Attempting atomic lock...');
 
-        // 1. ACTUALIZAR TABLA PAGOS (Simplificado para evitar Error 400)
+        // Safe Wompi transaction data to merge (never overwrites original keys)
         const safeTransactionData = {
             id: transactionData.id,
             status: transactionData.status,
@@ -249,43 +252,78 @@ async function processTransactionStatus(
             created_at: transactionData.created_at
         };
 
-        const { error: payError } = await supabase
+        // Fetch the existing pagos row BEFORE updating so we can deep-merge datos_transaccion
+        // This preserves package_slug and other keys we stored at payment initiation (#6 Fix)
+        const { data: existingPago } = await supabase
+            .from('pagos')
+            .select('id, usuario_id, datos_transaccion')
+            .eq('referencia_pedido', reference)
+            .maybeSingle();
+
+        // Spread-merge: existing keys take precedence, then Wompi data appended
+        const mergedDatosTransaccion = {
+            ...(existingPago?.datos_transaccion as any || {}),
+            ...safeTransactionData
+        };
+
+        // ═══════════════════════════════════════════════════════════════
+        // ATOMIC LOCK (#2 / #10 Fix): Race Condition Prevention
+        //   .eq('estado', 'pendiente') ensures only ONE thread wins.
+        //   If another thread already set it to 'aprobado', 0 rows returned.
+        // ═══════════════════════════════════════════════════════════════
+        const { data: lockedRows, error: lockError } = await supabase
             .from('pagos')
             .update({
                 estado: 'aprobado',
                 wompi_transaction_id: transactionId,
-                datos_transaccion: safeTransactionData,
+                datos_transaccion: mergedDatosTransaccion,
                 updated_at: new Date().toISOString()
             })
-            .eq('referencia_pedido', reference);
+            .eq('referencia_pedido', reference)
+            .eq('estado', 'pendiente')   // ← THE ATOMIC LOCK
+            .select('id, usuario_id, inmueble_id, datos_transaccion');
 
-        if (payError) {
-            console.error('❌ Error updating pagos:', payError);
-        } else {
-            console.log('💳 [Update] Pagos table updated successfully');
+        if (lockError) {
+            console.error('❌ [Update] Atomic lock update error:', lockError);
         }
 
-        // Recuperar el pago completo (necesitamos usuario_id y datos originales)
-        const { data: pagoCompleto } = await supabase
-            .from('pagos')
-            .select('id, usuario_id, inmueble_id, datos_transaccion')
-            .eq('referencia_pedido', reference)
-            .single();
+        // ═══════════════════════════════════════════════════════════════
+        // LOCK LOST: Another thread already set estado=aprobado.
+        // Amendment #3: Safety-net — ensure THIS thread's wompi_transaction_id
+        // is not lost if the winning thread failed to persist it.
+        // ═══════════════════════════════════════════════════════════════
+        if (!lockedRows || lockedRows.length === 0) {
+            console.warn('⚠️ [Update] Lock lost — another thread already processed this payment. Applying wompi_transaction_id safety-net...');
+            // Best-effort: only write if not already set (prevents overwriting valid data)
+            await supabase
+                .from('pagos')
+                .update({ wompi_transaction_id: transactionId, updated_at: new Date().toISOString() })
+                .eq('referencia_pedido', reference)
+                .is('wompi_transaction_id', null);
+            console.log('✅ [Update] Safety-net applied. Returning success to caller.');
+            return { success: true, status: 'APPROVED', propertyId };
+        }
 
-        const finalPagoId = pagoCompleto?.id;
-        const payerUserId = pagoCompleto?.usuario_id;
-        const storedData = pagoCompleto?.datos_transaccion as any;
-        const packageSlug = storedData?.package_slug;
+        // This thread WON the lock. Extract authoritative data.
+        console.log('🔒 [Update] Atomic lock acquired. Processing payment business logic...');
+        const wonRow = lockedRows[0];
+        const finalPagoId = wonRow.id;
+        const payerUserId = wonRow.usuario_id;
+        // package_slug is now in the merged datos_transaccion we just wrote
+        const finalDatos = wonRow.datos_transaccion as any;
+        const packageSlug = finalDatos?.package_slug;
+
+        console.log('💳 [Update] pago_id:', finalPagoId, '| payerUserId:', payerUserId, '| package_slug:', packageSlug || 'none (legacy)');
 
         // ═══════════════════════════════════════════════════════════════
-        // 2. MINT WALLET & CREDITS (Payment-to-Wallet Bridge)
+        // WALLET & CREDIT MINTING BRIDGE
+        // Only executes if the payment had a package_slug (paid plans)
         // ═══════════════════════════════════════════════════════════════
-        let duracionDias = 30; // default fallback
+        let duracionDias = 30; // default fallback for legacy payments
 
         if (packageSlug && payerUserId) {
-            console.log('📦 [Bridge] Package slug from payment:', packageSlug);
+            console.log('📦 [Bridge] Fetching package details for slug:', packageSlug);
 
-            // Fetch the package details
             const { data: pkg } = await supabase
                 .from('packages')
                 .select('id, creditos, duracion_anuncio_dias, features')
@@ -294,30 +332,30 @@ async function processTransactionStatus(
 
             if (pkg) {
                 duracionDias = pkg.duracion_anuncio_dias || 30;
-                console.log('📦 [Bridge] Package found:', packageSlug, '| Credits:', pkg.creditos, '| Duration:', duracionDias, 'days');
+                console.log('📦 [Bridge] Package resolved:', packageSlug, '| credits:', pkg.creditos, '| duration:', duracionDias, 'days');
 
-                // ─── Idempotency Guard ───
-                // Check if a wallet was already minted for this pago
+                // ─── Idempotency Guard (#7 Fix) ───
+                // Tied strictly to pago_id — NOT user_id+package_id.
+                // Allows repeat purchases of the same plan.
                 const { data: existingWallet } = await supabase
                     .from('user_wallets')
                     .select('id')
-                    .eq('user_id', payerUserId)
-                    .eq('package_id', pkg.id)
-                    .order('created_at', { ascending: false })
-                    .limit(1)
+                    .eq('pago_id', finalPagoId)
                     .maybeSingle();
 
                 if (existingWallet) {
-                    console.log('⚠️ [Bridge] Wallet already exists for this user+package, skipping mint:', existingWallet.id);
+                    console.log('⚠️ [Bridge] Wallet already minted for this pago_id, skipping:', existingWallet.id);
                 } else {
                     // ─── Mint user_wallets ───
+                    // creditos_usados starts at 0 (#9 Fix). listing_credits logs each use.
                     const { data: newWallet, error: walletErr } = await supabase
                         .from('user_wallets')
                         .insert({
                             user_id: payerUserId,
                             package_id: pkg.id,
+                            pago_id: finalPagoId,           // #8 Fix: persist pago_id
                             creditos_total: pkg.creditos,
-                            creditos_usados: 1, // First property auto-consumed
+                            creditos_usados: 0,             // #9 Fix: start at 0
                         })
                         .select('id')
                         .single();
@@ -325,7 +363,7 @@ async function processTransactionStatus(
                     if (walletErr || !newWallet) {
                         console.error('❌ [Bridge] Failed to create wallet:', walletErr);
                     } else {
-                        console.log('✅ [Bridge] Wallet minted:', newWallet.id, '| Credits:', pkg.creditos, '(1 used)');
+                        console.log('✅ [Bridge] Wallet minted:', newWallet.id, '| Total credits:', pkg.creditos);
 
                         // ─── Mint listing_credits ───
                         const now = new Date();
@@ -344,25 +382,33 @@ async function processTransactionStatus(
                             });
 
                         if (lcError) {
-                            console.error('❌ [Bridge] Failed to create listing_credit:', lcError);
+                            // ─── Application-Level Rollback (Amendment #2) ───
+                            console.error('❌ [Bridge] listing_credits insert failed:', lcError.message);
+                            try {
+                                await supabase.from('user_wallets').delete().eq('id', newWallet.id);
+                                console.warn('🔄 [Bridge] Orphaned wallet deleted during rollback:', newWallet.id);
+                            } catch (deleteError: any) {
+                                // Amendment #2: DELETE also failed — emit critical alert for manual intervention
+                                console.error('[BRIDGE-CRITICAL] ORPHANED WALLET DETECTED. Manual cleanup required for wallet ID:', newWallet.id, deleteError);
+                            }
                         } else {
-                            console.log('✅ [Bridge] Listing credit minted for property:', propertyId);
+                            console.log('✅ [Bridge] Listing credit minted for property:', propertyId, '| Expires:', expiration.toISOString());
                         }
                     }
                 }
             } else {
-                console.warn('⚠️ [Bridge] Package not found for slug:', packageSlug, '— using default 30-day expiration');
+                console.warn('⚠️ [Bridge] Package not found for slug:', packageSlug, '— skipping wallet creation, using 30-day expiration');
             }
         } else {
-            console.warn('⚠️ [Bridge] No package_slug in payment data — legacy flow, using 30-day default');
+            console.warn('⚠️ [Bridge] No package_slug in merged datos_transaccion — legacy/webhook flow, using 30-day expiration');
         }
 
-        // 3. CALCULAR FECHAS (using dynamic duration from package)
+        // ─── Dates using dynamic package duration (#5 Fix) ───
         const fechaPublicacion = new Date();
         const fechaExpiracion = new Date();
         fechaExpiracion.setDate(fechaExpiracion.getDate() + duracionDias);
 
-        // 4. ACTUALIZAR INMUEBLE
+        // ─── Update inmueble ───
         const { error: propError } = await supabase
             .from('inmuebles')
             .update({
@@ -398,90 +444,56 @@ async function processTransactionStatus(
 
 /**
  * Verify payment by Draft ID (Payment Links passthrough flow)
- * Used when Wompi redirects with ?draftId= and no transaction ID
- * 
+ * Used when Wompi redirects with ?draftId= and no transaction ID.
+ *
  * SECURITY (C-1 FIX): Never auto-approve. Must verify via DB record or Wompi API.
+ * Amendment #1: Explicitly handles already-aprobado case (webhook beat the browser).
+ * #11 Fix: Real implementation — queries pagos, polls Wompi, routes through processTransactionStatus.
  */
 async function verifyByDraftId(draftId: string): Promise<VerifyPaymentResult> {
     console.log('📋 [VerifyByDraftId] Processing for property:', draftId);
 
     const supabase = getServiceRoleClient();
 
-    // Check if property exists
-    const { data: property, error: propError } = await supabase
-        .from('inmuebles')
-        .select('id, estado, propietario_id')
-        .eq('id', draftId)
-        .single();
-
-    if (propError || !property) {
-        console.error('❌ [VerifyByDraftId] Property not found:', draftId);
-        return { success: false, error: 'Propiedad no encontrada' };
-    }
-
-    // Idempotency: if already processed, verify a real payment OR credit exists before confirming
-    if (property.estado === 'en_revision' || property.estado === 'publicado') {
-        console.log('🔍 [VerifyByDraftId] Property state is:', property.estado, '— verifying records...');
-
-        // ═══════════════════════════════════════════════════════════════
-        // PATH A: Wallet/Credit-based publication (PLG Freemium)
-        // publishWithCredits creates listing_credits, NOT pagos
-        // ═══════════════════════════════════════════════════════════════
-        const { data: credit } = await supabase
-            .from('listing_credits')
-            .select('id')
-            .eq('inmueble_id', draftId)
-            .maybeSingle();
-
-        if (credit) {
-            console.log('✅ [VerifyByDraftId] Confirmed listing credit exists:', credit.id);
-            return { success: true, status: 'APPROVED', propertyId: draftId };
-        }
-
-        // ═══════════════════════════════════════════════════════════════
-        // PATH B: Wompi payment-based publication (legacy/paid plans)
-        // ═══════════════════════════════════════════════════════════════
-        const { data: confirmedPayment } = await supabase
-            .from('pagos')
-            .select('id')
-            .eq('inmueble_id', draftId)
-            .eq('estado', 'aprobado')
-            .maybeSingle();
-
-        if (confirmedPayment) {
-            console.log('✅ [VerifyByDraftId] Confirmed payment exists:', confirmedPayment.id);
-            return { success: true, status: 'APPROVED', propertyId: draftId };
-        }
-
-        // No credit or payment found — fall through to Wompi polling
-        console.warn('⚠️ [VerifyByDraftId] Property in', property.estado, 'but NO credit or payment — continuing verification...');
-    }
-
     // ═══════════════════════════════════════════════════════════════
-    // STEP 1: Check for existing APPROVED payment in pagos table
+    // PATH A: Wallet/Credit-based publication (PLG Freemium)
+    // publishWithCredits creates listing_credits — no pagos row needed
     // ═══════════════════════════════════════════════════════════════
-    const { data: approvedPayment } = await supabase
-        .from('pagos')
-        .select('id, referencia_pedido, wompi_transaction_id')
+    const { data: credit } = await supabase
+        .from('listing_credits')
+        .select('id')
         .eq('inmueble_id', draftId)
-        .eq('estado', 'aprobado')
         .maybeSingle();
 
-    if (approvedPayment) {
-        console.log('✅ [VerifyByDraftId] Found approved payment record:', approvedPayment.id);
-        return await processTransactionStatus(
-            'APPROVED',
-            draftId,
-            approvedPayment.referencia_pedido,
-            approvedPayment.wompi_transaction_id || '',
-            { status: 'APPROVED', verified_via: 'existing_record' }
-        );
+    if (credit) {
+        console.log('✅ [VerifyByDraftId] PLG credit confirmed:', credit.id);
+        return { success: true, status: 'APPROVED', propertyId: draftId };
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // STEP 2: Check for PENDING payment — poll Wompi to confirm
+    // Amendment #1: Check for ALREADY-APPROVED pagos row first.
+    // If the webhook beat the browser, the row is already aprobado.
+    // Return success immediately — DO NOT reprocess into processTransactionStatus.
     // ═══════════════════════════════════════════════════════════════
-    const { data: pendingPayment } = await supabase
+    const { data: approvedPago } = await supabase
+        .from('pagos')
+        .select('id')
+        .eq('inmueble_id', draftId)
+        .eq('estado', 'aprobado')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+    if (approvedPago) {
+        console.log('✅ [VerifyByDraftId] Payment already aprobado (webhook won race):', approvedPago.id, '— returning success without reprocessing.');
+        return { success: true, status: 'APPROVED', propertyId: draftId };
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // PATH C: Pending payment — poll Wompi to get live status
+    // Route result through processTransactionStatus (single source of truth)
+    // ═══════════════════════════════════════════════════════════════
+    const { data: pendingPago } = await supabase
         .from('pagos')
         .select('id, referencia_pedido, wompi_transaction_id')
         .eq('inmueble_id', draftId)
@@ -490,11 +502,11 @@ async function verifyByDraftId(draftId: string): Promise<VerifyPaymentResult> {
         .limit(1)
         .maybeSingle();
 
-    if (pendingPayment?.wompi_transaction_id) {
-        console.log('⏳ [VerifyByDraftId] Found pending payment, polling Wompi:', pendingPayment.wompi_transaction_id);
+    if (pendingPago?.wompi_transaction_id) {
+        console.log('⏳ [VerifyByDraftId] Found pending payment, polling Wompi by txn ID:', pendingPago.wompi_transaction_id);
 
         const wompiResponse = await fetch(
-            `${getWompiApiUrl()}/transactions/${pendingPayment.wompi_transaction_id}`,
+            `${getWompiApiUrl()}/transactions/${pendingPago.wompi_transaction_id}`,
             { method: 'GET', headers: { 'Content-Type': 'application/json' }, cache: 'no-store' }
         );
 
@@ -504,19 +516,19 @@ async function verifyByDraftId(draftId: string): Promise<VerifyPaymentResult> {
             return await processTransactionStatus(
                 transaction.status,
                 draftId,
-                pendingPayment.referencia_pedido,
-                pendingPayment.wompi_transaction_id,
+                pendingPago.referencia_pedido,
+                pendingPago.wompi_transaction_id,
                 transaction
             );
-        } else {
-            console.error('❌ [VerifyByDraftId] Wompi API error:', wompiResponse.status);
         }
-    } else if (pendingPayment?.referencia_pedido) {
-        // Has a reference but no transaction ID — try searching by reference
-        console.log('⏳ [VerifyByDraftId] Pending payment without txn ID, searching by reference:', pendingPayment.referencia_pedido);
+        console.error('❌ [VerifyByDraftId] Wompi API error polling by txn ID:', wompiResponse.status);
+
+    } else if (pendingPago?.referencia_pedido) {
+        // Has reference but no transaction ID yet — poll by reference
+        console.log('⏳ [VerifyByDraftId] Pending payment without txn ID, searching Wompi by reference:', pendingPago.referencia_pedido);
 
         const wompiResponse = await fetch(
-            `${getWompiApiUrl()}/transactions?reference=${encodeURIComponent(pendingPayment.referencia_pedido)}`,
+            `${getWompiApiUrl()}/transactions?reference=${encodeURIComponent(pendingPago.referencia_pedido)}`,
             { method: 'GET', headers: { 'Content-Type': 'application/json' }, cache: 'no-store' }
         );
 
@@ -528,7 +540,7 @@ async function verifyByDraftId(draftId: string): Promise<VerifyPaymentResult> {
                 return await processTransactionStatus(
                     transaction.status,
                     draftId,
-                    pendingPayment.referencia_pedido,
+                    pendingPago.referencia_pedido,
                     transaction.id,
                     transaction
                 );
@@ -536,9 +548,7 @@ async function verifyByDraftId(draftId: string): Promise<VerifyPaymentResult> {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // STEP 3: No payment found — refuse to approve
-    // ═══════════════════════════════════════════════════════════════
+    // No valid payment found — refuse to approve
     console.error('❌ [VerifyByDraftId] No approved or pending payment found for property:', draftId);
     return {
         success: false,
