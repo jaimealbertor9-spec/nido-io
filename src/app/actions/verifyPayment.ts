@@ -260,10 +260,10 @@ async function processTransactionStatus(
             .eq('referencia_pedido', reference)
             .maybeSingle();
 
-        // Spread-merge: existing keys take precedence, then Wompi data appended
+        // Spread-merge: our internal data ALWAYS wins over incoming Wompi data
         const mergedDatosTransaccion = {
-            ...(existingPago?.datos_transaccion as any || {}),
-            ...safeTransactionData
+            ...safeTransactionData,
+            ...(existingPago?.datos_transaccion as any || {})
         };
 
         // ═══════════════════════════════════════════════════════════════

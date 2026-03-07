@@ -157,6 +157,7 @@ export async function POST(request: Request): Promise<Response> {
     // ─────────────────────────────────────────────────────────────────────
     if (!lockedPagos || lockedPagos.length === 0) {
       await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Lock lost — browser already processed this payment (idempotent)', { reference, id });
+      console.log('[LOCK-LOST] Webhook lock lost. Browser already processed this payment.');
       return Response.json({ success: true, message: 'Payment already processed by redirect flow (idempotent)' });
     }
 
@@ -209,7 +210,8 @@ export async function POST(request: Request): Promise<Response> {
               estado: 'aprobado',
               updated_at: new Date().toISOString()
             })
-            .eq('id', orphanedPago.id);
+            .eq('id', orphanedPago.id)
+            .eq('estado', 'pendiente');   // ← ATOMIC LOCK on adopt
 
           await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Orphaned pagos row adopted — reference linked', {
             pagoId: orphanedPago.id, propertyId, reference
