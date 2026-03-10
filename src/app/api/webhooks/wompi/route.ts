@@ -452,7 +452,8 @@ async function sendPaymentConfirmationEmail(
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPER: Handle Package Purchase (Credit Packs & Subscriptions)
-// Called when reference matches NIDO-PKG-{slug}-{userId_short}
+// Called when reference matches NIDO-PKG-{slug}-{userId_short}-{rand}
+// Uses ADOPT PATTERN (unified with property flow) + ROLLOVER UPSERT
 // ─────────────────────────────────────────────────────────────────────────────
 async function handlePackagePurchase(
   supabase: any,
@@ -462,18 +463,15 @@ async function handlePackagePurchase(
   transaction: any,
   evento: any
 ): Promise<Response> {
-  // Parse: NIDO-PKG-{slug}-{userId_short}
+  // Parse: NIDO-PKG-{slug}-{userId_short}-{rand}
   const parts = reference.split('-');
-  // parts: ['NIDO', 'PKG', slug, ...userId_parts]
   if (parts.length < 4) {
     await logSystemEvent('ERROR', 'WOMPI_WEBHOOK', 'Invalid package reference format', { reference });
     return Response.json({ success: false, error: 'Invalid package reference format' });
   }
 
   const packageSlug = parts[2];
-  const userIdShort = parts.slice(3).join('-'); // Rejoin in case userId contains dashes
-
-  console.log('[WOMPI WEBHOOK] 📦 Package purchase:', { packageSlug, userIdShort });
+  console.log('[WOMPI WEBHOOK] 📦 Package purchase detected:', { packageSlug, reference });
 
   // ─────────────────────────────────────────────────────────────────────
   // 1. Look up the package
@@ -491,86 +489,122 @@ async function handlePackagePurchase(
   }
 
   // ─────────────────────────────────────────────────────────────────────
-  // 2. Find the user by short ID prefix
+  // 2. ADOPT PATTERN: Find & lock the pending pagos row created by initiatePaymentSession
+  //    DO NOT INSERT a new pagos row — ADOPT the existing one.
   // ─────────────────────────────────────────────────────────────────────
-  const { data: user, error: userError } = await supabase
-    .from('usuarios')
-    .select('id, email, nombre')
-    .ilike('id', `${userIdShort}%`)
-    .limit(1)
-    .single();
-
-  if (userError || !user) {
-    await logSystemEvent('ERROR', 'WOMPI_WEBHOOK', 'User not found for package purchase', { userIdShort, error: userError?.message });
-    return Response.json({ success: false, error: 'User not found' });
-  }
-
-  // ─────────────────────────────────────────────────────────────────────
-  // 3. Idempotency: check if this transaction already created a wallet/subscription
-  // ─────────────────────────────────────────────────────────────────────
-  const { data: existingPago } = await supabase
+  const { data: adoptedRows, error: adoptError } = await supabase
     .from('pagos')
-    .select('id, estado')
-    .eq('wompi_transaction_id', transactionId)
-    .maybeSingle();
-
-  if (existingPago && existingPago.estado === 'aprobado') {
-    await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Package payment already processed (idempotent)', { transactionId });
-    return Response.json({ success: true, message: 'Package payment already processed' });
-  }
-
-  // ─────────────────────────────────────────────────────────────────────
-  // 4. Create payment record in pagos
-  // ─────────────────────────────────────────────────────────────────────
-  const { data: newPago, error: pagoInsertError } = await supabase
-    .from('pagos')
-    .insert({
-      referencia_pedido: reference,
-      wompi_transaction_id: transactionId,
-      monto: amountInCents / 100,
+    .update({
       estado: 'aprobado',
-      usuario_id: user.id,
-      metodo_pago: 'wompi_link',
-      respuesta_pasarela: evento,
+      wompi_transaction_id: transactionId,
       datos_transaccion: {
+        ...(evento?.data?.transaction || {}),
         package_slug: packageSlug,
         package_name: pkg.nombre,
         package_type: pkg.tipo
-      }
+      },
+      updated_at: new Date().toISOString()
     })
-    .select('id')
-    .single();
+    .eq('referencia_pedido', reference)
+    .eq('estado', 'pendiente')     // ← ATOMIC LOCK
+    .select('id, usuario_id');
 
-  if (pagoInsertError) {
-    await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', 'Failed to insert package payment', {
-      reference, userId: user.id, error: pagoInsertError.message
+  if (adoptError) {
+    await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', 'Failed to adopt pagos row for package', {
+      reference, error: adoptError.message
     });
-    return Response.json({ success: false, error: 'Failed to record package payment' });
+    return Response.json({ success: false, error: 'Failed to adopt payment record' });
+  }
+
+  if (!adoptedRows || adoptedRows.length === 0) {
+    console.log('[LOCK-LOST] Package webhook lock lost for reference:', reference);
+    await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Package payment lock lost (idempotent)', { reference, transactionId });
+    return Response.json({ success: true, message: 'Package payment already processed (idempotent)' });
+  }
+
+  const pagoId = adoptedRows[0].id;
+  const userId = adoptedRows[0].usuario_id;
+  console.log('[WOMPI WEBHOOK] ✅ Adopted pagos row:', pagoId, '| userId:', userId);
+
+  // 3. Secondary Safety Net (best-effort pago_id idempotency)
+  //    NOTE: Because UPSERT overwrites pago_id, this only catches the *most recent* purchase.
+  //    The atomic lock on pagos is the PRIMARY idempotency source.
+  // ─────────────────────────────────────────────────────────────────────
+  const { data: existingWalletForPago } = await supabase
+    .from('user_wallets')
+    .select('id')
+    .eq('pago_id', pagoId)
+    .maybeSingle();
+
+  if (existingWalletForPago) {
+    await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Secondary guard: wallet already exists for pago_id (idempotent)', { pagoId });
+    return Response.json({ success: true, message: 'Wallet already minted for this payment' });
   }
 
   // ─────────────────────────────────────────────────────────────────────
-  // 5. Fulfill: create wallet (paquete) or subscription (suscripcion)
+  // 4. Fulfill: ROLLOVER for wallet (paquete) or subscription
   // ─────────────────────────────────────────────────────────────────────
   if (pkg.tipo === 'paquete') {
-    const { error: walletError } = await supabase
-      .from('user_wallets')
-      .insert({
-        user_id: user.id,
-        package_id: pkg.id,
-        creditos_total: pkg.creditos,
-        creditos_usados: 0,
-        pago_id: newPago.id
-      });
+    const durationDays = pkg.duracion_anuncio_dias || 30;
+    const newExpiresAt = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
 
-    if (walletError) {
-      await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', 'PAYMENT OK BUT WALLET CREATION FAILED', {
-        pagoId: newPago.id, userId: user.id, error: walletError.message
-      });
-      return Response.json({ success: false, error: 'Wallet creation failed' });
+    // Check if wallet already exists for rollover
+    const { data: existingWallet } = await supabase
+      .from('user_wallets')
+      .select('id, creditos_total, expires_at')
+      .eq('user_id', userId)
+      .eq('package_id', pkg.id)
+      .maybeSingle();
+
+    if (existingWallet) {
+      // ROLLOVER: Sum credits, extend expiration (whichever is further)
+      const newTotal = existingWallet.creditos_total + pkg.creditos;
+      const bestExpiry = existingWallet.expires_at && new Date(existingWallet.expires_at) > new Date(newExpiresAt)
+        ? existingWallet.expires_at
+        : newExpiresAt;
+
+      const { error: updateError } = await supabase
+        .from('user_wallets')
+        .update({
+          creditos_total: newTotal,
+          expires_at: bestExpiry,
+          pago_id: pagoId
+        })
+        .eq('id', existingWallet.id);
+
+      if (updateError) {
+        await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', 'PAYMENT OK BUT WALLET ROLLOVER UPDATE FAILED', {
+          pagoId, userId, error: updateError.message
+        });
+        return Response.json({ success: false, error: 'Wallet rollover failed' });
+      }
+
+      console.log('[WOMPI WEBHOOK] 🔄 Wallet rolled over:', newTotal, 'credits | Expires:', bestExpiry);
+    } else {
+      // FIRST PURCHASE: Insert new wallet
+      const { error: insertError } = await supabase
+        .from('user_wallets')
+        .insert({
+          user_id: userId,
+          package_id: pkg.id,
+          creditos_total: pkg.creditos,
+          creditos_usados: 0,
+          pago_id: pagoId,
+          expires_at: newExpiresAt
+        });
+
+      if (insertError) {
+        await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', 'PAYMENT OK BUT WALLET CREATION FAILED', {
+          pagoId, userId, error: insertError.message
+        });
+        return Response.json({ success: false, error: 'Wallet creation failed' });
+      }
+
+      console.log('[WOMPI WEBHOOK] ✅ New wallet created:', pkg.creditos, 'credits | Expires:', newExpiresAt);
     }
 
     await logSystemEvent('INFO', 'WOMPI_WEBHOOK', `Package '${pkg.nombre}' fulfilled — ${pkg.creditos} credits added`, {
-      pagoId: newPago.id, userId: user.id, packageSlug
+      pagoId, userId, packageSlug
     });
 
   } else if (pkg.tipo === 'suscripcion') {
@@ -581,33 +615,39 @@ async function handlePackagePurchase(
     const { error: subError } = await supabase
       .from('user_subscriptions')
       .insert({
-        user_id: user.id,
+        user_id: userId,
         package_id: pkg.id,
         estado: 'activa',
         fecha_inicio: fechaInicio.toISOString(),
         fecha_fin: fechaFin.toISOString(),
         auto_renewal: true,
-        pago_id: newPago.id
+        pago_id: pagoId
       });
 
     if (subError) {
       await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', 'PAYMENT OK BUT SUBSCRIPTION CREATION FAILED', {
-        pagoId: newPago.id, userId: user.id, error: subError.message
+        pagoId, userId, error: subError.message
       });
       return Response.json({ success: false, error: 'Subscription creation failed' });
     }
 
     await logSystemEvent('INFO', 'WOMPI_WEBHOOK', `Subscription '${pkg.nombre}' activated until ${fechaFin.toISOString()}`, {
-      pagoId: newPago.id, userId: user.id, packageSlug
+      pagoId, userId, packageSlug
     });
   }
 
   // ─────────────────────────────────────────────────────────────────────
-  // 6. Send confirmation email
+  // 5. Fetch user email and send confirmation
   // ─────────────────────────────────────────────────────────────────────
+  const { data: emailUser } = await supabase
+    .from('usuarios')
+    .select('email, nombre')
+    .eq('id', userId)
+    .maybeSingle();
+
   await sendPackageConfirmationEmail(
-    transaction.customer_email || user.email,
-    user.nombre || transaction.customer_data?.full_name || 'Usuario',
+    transaction.customer_email || emailUser?.email,
+    emailUser?.nombre || transaction.customer_data?.full_name || 'Usuario',
     pkg.nombre,
     pkg.tipo,
     pkg.creditos
@@ -616,8 +656,8 @@ async function handlePackagePurchase(
   return Response.json({
     success: true,
     message: `Package '${pkg.nombre}' fulfilled successfully`,
-    pagoId: newPago.id,
-    userId: user.id
+    pagoId,
+    userId
   });
 }
 

@@ -1,14 +1,20 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { getPackages } from '@/app/actions/publishContext';
-import { CheckCircle, Crown, Info, Zap, ArrowRight, Loader2 } from 'lucide-react';
+import { initiatePaymentSession } from '@/app/actions/payment';
+import { useAuth } from '@/components/AuthProvider';
+import { CheckCircle, Crown, Info, Zap, ArrowRight, Loader2, PartyPopper } from 'lucide-react';
 
 export default function PlanesNidoPage() {
     const router = useRouter();
+    const searchParams = useSearchParams();
+    const { user } = useAuth();
     const [packages, setPackages] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    const [purchasingSlug, setPurchasingSlug] = useState<string | null>(null);
+    const showSuccess = searchParams.get('success') === 'true';
 
     useEffect(() => {
         async function fetchPlans() {
@@ -20,14 +26,31 @@ export default function PlanesNidoPage() {
         fetchPlans();
     }, []);
 
-    const handleSelectPlan = (pkg: any) => {
-        // Without a draft ID, we just attach a general reference and return to the dashboard
-        // e.g. NIDO-PKG-bronze-[random]
-        const ref = `NIDO-PKG-${pkg.slug}-${Math.random().toString(36).substring(7)}`;
-
-        // Redirect via server-side API to avoid localhost origin blocks from Wompi WAF
-        const checkoutUrl = `/api/checkout?link=${encodeURIComponent(pkg.wompi_payment_link_url)}&reference=${encodeURIComponent(ref)}`;
-        window.location.href = checkoutUrl;
+    const handleSelectPlan = async (pkg: any) => {
+        if (!user?.id || !user?.email) {
+            router.push('/auth/login');
+            return;
+        }
+        setPurchasingSlug(pkg.slug);
+        try {
+            const result = await initiatePaymentSession(
+                null,                       // standalone: no propertyId
+                user.email,
+                user.id,
+                undefined,                  // default redirect
+                pkg.precio_cop,
+                pkg.slug
+            );
+            if (result.success && result.data?.checkoutUrl) {
+                window.location.href = result.data.checkoutUrl;
+            } else {
+                alert(result.error || 'Error al iniciar el pago');
+                setPurchasingSlug(null);
+            }
+        } catch {
+            alert('Error inesperado al iniciar el pago');
+            setPurchasingSlug(null);
+        }
     };
 
     if (loading) {
@@ -44,6 +67,12 @@ export default function PlanesNidoPage() {
     return (
         <div className="flex-1 overflow-y-auto p-4 md:p-8 bg-[#F3F4F6] relative z-0">
             <div className="max-w-6xl mx-auto">
+                {showSuccess && (
+                    <div className="mb-8 p-4 bg-green-50 border border-green-200 rounded-xl flex items-center gap-3 animate-in fade-in slide-in-from-top-4 duration-500">
+                        <PartyPopper className="w-6 h-6 text-green-600 shrink-0" />
+                        <p className="text-green-800 font-medium">¡Compra exitosa! Tus créditos han sido acreditados a tu billetera.</p>
+                    </div>
+                )}
                 <div className="text-center mb-12 animate-in fade-in slide-in-from-bottom-4 duration-700">
                     <h1 className="text-4xl md:text-5xl font-extrabold text-[#0c263b] tracking-tight mb-4">
                         Acelera tus resultados con <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-500 to-amber-300">Nido Premium</span>
@@ -125,7 +154,7 @@ export default function PlanesNidoPage() {
                                     </li>
                                     <li className="flex items-start gap-3 text-sm">
                                         <CheckCircle className={`w-5 h-5 shrink-0 ${isUnlimited ? 'text-amber-400' : 'text-[#1A56DB]'}`} />
-                                        <span>Activas por 90 días</span>
+                                        <span>Activas por {pkg.duracion_anuncio_dias} días</span>
                                     </li>
                                     <li className="flex items-start gap-3 text-sm">
                                         <CheckCircle className={`w-5 h-5 shrink-0 ${isUnlimited ? 'text-amber-400' : 'text-[#1A56DB]'}`} />
@@ -139,14 +168,20 @@ export default function PlanesNidoPage() {
 
                                 <button
                                     onClick={() => handleSelectPlan(pkg)}
+                                    disabled={!!purchasingSlug}
                                     className={`w-full py-3.5 px-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-md
                                         ${isUnlimited
                                             ? 'bg-gradient-to-r from-amber-400 to-yellow-300 text-amber-950 hover:from-amber-300 hover:to-yellow-200 hover:shadow-lg hover:shadow-amber-500/20'
                                             : 'bg-[#1A56DB] text-white hover:bg-blue-700 hover:shadow-lg hover:shadow-blue-500/20'
                                         }
+                                        ${purchasingSlug ? 'opacity-60 cursor-not-allowed' : ''}
                                     `}
                                 >
-                                    Adquirir Plan <ArrowRight className="w-4 h-4" />
+                                    {purchasingSlug === pkg.slug ? (
+                                        <><Loader2 className="w-4 h-4 animate-spin" /> Procesando...</>
+                                    ) : (
+                                        <>Adquirir Plan <ArrowRight className="w-4 h-4" /></>
+                                    )}
                                 </button>
 
                                 <p className={`text-center text-[10px] mt-3 ${isUnlimited ? 'text-blue-300' : 'text-gray-400'}`}>

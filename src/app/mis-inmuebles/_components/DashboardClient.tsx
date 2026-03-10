@@ -3,10 +3,12 @@
 import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { useRouter } from 'next/navigation';
 import { User } from '@supabase/supabase-js';
 import {
-    Home, ShieldCheck, CreditCard, Users, MapPin, MoreHorizontal, Eye, FileText, CheckCircle, Clock, Pencil, Plus, Zap
+    Home, ShieldCheck, CreditCard, Users, MapPin, MoreHorizontal, Eye, FileText, CheckCircle, Clock, Pencil, Plus, Zap, RefreshCw, Loader2, AlertTriangle
 } from 'lucide-react';
+import { renewListing } from '@/app/actions/renewListing';
 
 // =============================================================================
 // TYPES
@@ -24,8 +26,10 @@ interface DashboardClientProps {
 // =============================================================================
 export default function DashboardClient({ user, profile, properties, isFirstTimer = false }: DashboardClientProps) {
     // UI State only
+    const router = useRouter();
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
     const [currentFilter, setCurrentFilter] = useState<'todos' | 'publicado' | 'en_revision' | 'borrador' | 'expirado'>('todos');
+    const [renewingId, setRenewingId] = useState<string | null>(null);
 
     // Derived display values
     const displayName = profile?.nombre || user?.user_metadata?.full_name || user?.email?.split('@')[0];
@@ -205,6 +209,48 @@ export default function DashboardClient({ user, profile, properties, isFirstTime
                                             <p className="text-xs text-amber-800 leading-snug">
                                                 Tu anuncio está siendo revisado por nuestro equipo de calidad. Estará activo en menos de 24H.
                                             </p>
+                                        </div>
+                                    )}
+
+                                    {/* EXPIRADO: Vencido alert + Renovar button */}
+                                    {getEffectiveEstado(p) === 'expirado' && (
+                                        <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-3 animate-in fade-in duration-300">
+                                            <div className="flex items-start gap-2 mb-2">
+                                                <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                                                <p className="text-xs text-red-700 leading-snug font-medium">
+                                                    Tu publicación ha expirado y ya no es visible al público.
+                                                </p>
+                                            </div>
+                                            <button
+                                                onClick={async (e) => {
+                                                    e.preventDefault();
+                                                    e.stopPropagation();
+                                                    setRenewingId(p.id);
+                                                    try {
+                                                        const result = await renewListing(p.id, user.id);
+                                                        if (result.success) {
+                                                            alert(`¡Renovado! Tu propiedad estará activa por ${result.data?.durationDays} días más (en revisión).`);
+                                                            window.location.reload();
+                                                        } else if (result.redirect) {
+                                                            router.push(result.redirect);
+                                                        } else {
+                                                            alert(result.error || 'Error al renovar');
+                                                        }
+                                                    } catch {
+                                                        alert('Error inesperado');
+                                                    } finally {
+                                                        setRenewingId(null);
+                                                    }
+                                                }}
+                                                disabled={renewingId === p.id}
+                                                className="w-full mt-1 py-2 px-3 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-sm disabled:opacity-60"
+                                            >
+                                                {renewingId === p.id ? (
+                                                    <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Renovando...</>
+                                                ) : (
+                                                    <><RefreshCw className="w-3.5 h-3.5" /> Renovar Publicación</>
+                                                )}
+                                            </button>
                                         </div>
                                     )}
 

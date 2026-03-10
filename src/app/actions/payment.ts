@@ -29,8 +29,14 @@ function generateReference(propertyId: string): string {
     return `NIDO-${shortId}-${timestamp}`;
 }
 
+function generateStandaloneReference(slug: string, userId: string): string {
+    const shortUser = userId.substring(0, 8);
+    const rand = Math.random().toString(36).substring(2, 8);
+    return `NIDO-PKG-${slug}-${shortUser}-${rand}`;
+}
+
 export async function initiatePaymentSession(
-    propertyId: string,
+    propertyId: string | null,
     userEmail: string,
     userId: string,
     customRedirectUrl?: string,
@@ -63,39 +69,51 @@ export async function initiatePaymentSession(
         console.log('✅ [Payment] WOMPI_PUBLIC_KEY: PRESENT');
 
         const supabase = getServiceRoleClient();
-        // 2. Fetch property and user data for customer info
-        console.log('📋 [Payment] Fetching property data...');
-        const { data: propertyData, error: propertyError } = await supabase
-            .from('inmuebles')
-            .select('titulo, telefono_llamadas, whatsapp')
-            .eq('id', propertyId)
-            .single();
 
-        if (propertyError) {
-            console.warn('⚠️ [Payment] Could not fetch property data:', propertyError.message);
+        // ========================================
+        // CONDITIONAL: Property & User data fetches
+        // Skipped for standalone wallet purchases (propertyId = null)
+        // ========================================
+        let propertyTitle = 'Créditos Nido';
+        let customerPhone = '';
+        let customerName = userEmail.split('@')[0];
+
+        if (propertyId) {
+            console.log('📋 [Payment] Fetching property data...');
+            const { data: propertyData, error: propertyError } = await supabase
+                .from('inmuebles')
+                .select('titulo, telefono_llamadas, whatsapp')
+                .eq('id', propertyId)
+                .single();
+
+            if (propertyError) {
+                console.warn('⚠️ [Payment] Could not fetch property data:', propertyError.message);
+            } else {
+                propertyTitle = propertyData?.titulo?.substring(0, 30) || propertyId.substring(0, 8);
+            }
+
+            // Get user phone from usuarios table
+            const { data: userData, error: userError } = await supabase
+                .from('usuarios')
+                .select('telefono, nombre')
+                .eq('id', userId)
+                .single();
+
+            if (userError) {
+                console.warn('⚠️ [Payment] Could not fetch user data:', userError.message);
+            }
+
+            // Extract phone (priority: user phone > property whatsapp > property phone)
+            customerPhone = userData?.telefono
+                || propertyData?.whatsapp
+                || propertyData?.telefono_llamadas
+                || '';
+            customerName = userData?.nombre || userEmail.split('@')[0];
+
+            console.log('👤 [Payment] Customer:', customerName, customerPhone ? '(phone found)' : '(no phone)');
         }
 
-        // Get user phone from usuarios table
-        const { data: userData, error: userError } = await supabase
-            .from('usuarios')
-            .select('telefono, nombre')
-            .eq('id', userId)
-            .single();
-
-        if (userError) {
-            console.warn('⚠️ [Payment] Could not fetch user data:', userError.message);
-        }
-
-        // Extract phone (priority: user phone > property whatsapp > property phone)
-        const customerPhone = userData?.telefono
-            || propertyData?.whatsapp
-            || propertyData?.telefono_llamadas
-            || '';
-        const customerName = userData?.nombre || userEmail.split('@')[0];
-
-        console.log('👤 [Payment] Customer:', customerName, customerPhone ? '(phone found)' : '(no phone)');
-
-        // 3. Verify user documents
+        // Verify user documents (required for all flows)
         const { data: userVerifications } = await supabase
             .from('user_verifications')
             .select('estado, documento_url')
@@ -108,29 +126,38 @@ export async function initiatePaymentSession(
             return { success: false, error: 'Debes subir tu documento de identidad antes de pagar.' };
         }
 
-        // 4. Wompi credentials are already validated at function entry
-        // Using privateKey, publicKey, integritySecret from the top
+        // ========================================
+        // REFERENCE GENERATION
+        // ========================================
+        const isStandalone = !propertyId;
+        const reference = isStandalone
+            ? generateStandaloneReference(packageSlug || 'unknown', userId)
+            : generateReference(propertyId);
 
-        const reference = generateReference(propertyId);
-        const finalAmountCents = amountCOP ? Math.round(amountCOP * 100) : 1000000; // default $10K COP
+        const finalAmountCents = amountCOP ? Math.round(amountCOP * 100) : 1000000;
 
-        // 5. Generate integrity signature
+        // Generate integrity signature
         const signatureChain = `${reference}${finalAmountCents}${CURRENCY}${integritySecret}`;
         const signature = createHash('sha256').update(signatureChain).digest('hex');
         console.log('🔐 [Payment] Signature generated for reference:', reference);
 
-        // 6. Build dynamic redirect URL with draftId passthrough
-        // IMPORTANT: Wompi Payment Links use opaque references, so we pass draftId via URL
+        // Build dynamic redirect URL
         const baseUrl = getBaseUrl();
-        const redirectUrl = customRedirectUrl || `${baseUrl}/publicar/exito?draftId=${propertyId}`;
+        const redirectUrl = isStandalone
+            ? customRedirectUrl || `${baseUrl}/mis-inmuebles/planes?success=true`
+            : customRedirectUrl || `${baseUrl}/publicar/exito?draftId=${propertyId}`;
         console.log('🔗 [Payment] Redirect URL:', redirectUrl);
 
-        // 7. Create Payment Link via Wompi API
+        // Create Payment Link via Wompi API
         console.log('📡 [Payment] Calling Wompi Payment Links API...');
 
         const paymentLinkPayload: any = {
-            name: `Nido ${packageSlug ? packageSlug.charAt(0).toUpperCase() + packageSlug.slice(1) : 'Publicación'} - ${propertyData?.titulo?.substring(0, 30) || propertyId.substring(0, 8)}`,
-            description: `Publicación de inmueble en Nido.io${packageSlug ? ` (Plan ${packageSlug})` : ''}`,
+            name: isStandalone
+                ? `Nido ${packageSlug ? packageSlug.charAt(0).toUpperCase() + packageSlug.slice(1) : 'Créditos'}`
+                : `Nido ${packageSlug ? packageSlug.charAt(0).toUpperCase() + packageSlug.slice(1) : 'Publicación'} - ${propertyTitle}`,
+            description: isStandalone
+                ? `Compra de créditos Nido.io (Plan ${packageSlug || 'desconocido'})`
+                : `Publicación de inmueble en Nido.io${packageSlug ? ` (Plan ${packageSlug})` : ''}`,
             single_use: true,
             collect_shipping: false,
             currency: CURRENCY,
