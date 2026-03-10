@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { supabase, InmuebleFormData } from '@/lib/supabase';
 import { initiatePaymentSession } from '@/app/actions/payment';
 
@@ -19,10 +20,50 @@ interface StepRevisionProps {
 export default function StepRevision({ formData, onGuardar, guardando }: StepRevisionProps) {
     const router = useRouter();
     const [loading, setLoading] = useState(false);
-    // scriptLoaded state removed - using redirect method
     const [pagoExitoso, setPagoExitoso] = useState(false);
     const [inmuebleIdGuardado, setInmuebleIdGuardado] = useState<string | null>(null);
     const [esperandoConfirmacion, setEsperandoConfirmacion] = useState(false);
+
+    // ============================================================
+    // KYC GATE — Live re-evaluation (no cached state)
+    // Runs on mount + on window focus + on tab return
+    // so users who upload their ID and come back are unblocked instantly.
+    // ============================================================
+    type KycStatus = 'loading' | 'ok' | 'required';
+    const [kycStatus, setKycStatus] = useState<KycStatus>('loading');
+
+    const checkKyc = useCallback(async () => {
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) { setKycStatus('required'); return; }
+
+            const { data: verifications } = await supabase
+                .from('user_verifications')
+                .select('documento_url')
+                .eq('user_id', user.id);
+
+            const hasDoc = verifications?.some((v: any) => v.documento_url);
+            setKycStatus(hasDoc ? 'ok' : 'required');
+        } catch {
+            setKycStatus('required');
+        }
+    }, []);
+
+    useEffect(() => {
+        // Initial check
+        checkKyc();
+
+        // Re-check when the user returns to this tab (uploaded their ID in another tab)
+        const onFocus = () => checkKyc();
+        const onVisibility = () => { if (document.visibilityState === 'visible') checkKyc(); };
+
+        window.addEventListener('focus', onFocus);
+        document.addEventListener('visibilitychange', onVisibility);
+        return () => {
+            window.removeEventListener('focus', onFocus);
+            document.removeEventListener('visibilitychange', onVisibility);
+        };
+    }, [checkKyc]);
 
     // ============================================================
     // SUSCRIPCIÓN REALTIME: Detectar cuando el webhook confirma el pago
@@ -378,6 +419,28 @@ export default function StepRevision({ formData, onGuardar, guardando }: StepRev
                 </p>
             </div>
 
+            {/* ── KYC BANNER ── Shown when document is missing */}
+            {kycStatus === 'required' && (
+                <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-5 flex items-start gap-4 shadow-sm animate-in fade-in duration-300">
+                    <span className="text-3xl flex-shrink-0">🪪</span>
+                    <div className="flex-1">
+                        <h4 className="font-bold text-amber-800 text-base mb-1">Documento de identidad requerido</h4>
+                        <p className="text-sm text-amber-700 mb-3">
+                            Para publicar tu inmueble necesitas subir una foto de tu cédula. Puedes pagar sin documento, pero la publicación requiere verificación.
+                        </p>
+                        <Link
+                            href="/mis-inmuebles?tab=verificacion"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold rounded-xl transition-all shadow-sm"
+                        >
+                            📎 Subir documento ahora
+                        </Link>
+                        <p className="text-xs text-amber-600 mt-2">Una vez subido, vuelve aquí — el botón se desbloqueará automáticamente.</p>
+                    </div>
+                </div>
+            )}
+
             {/* Card de preview */}
             <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl border border-gray-200 overflow-hidden shadow-lg">
                 {/* Header con imagen placeholder */}
@@ -507,13 +570,13 @@ export default function StepRevision({ formData, onGuardar, guardando }: StepRev
             {/* BOTÓN GRANDE: Confirmar y Pagar con Wompi */}
             <button
                 onClick={handleWompiPayment}
-                disabled={isLoading || pagoExitoso}
+                disabled={isLoading || pagoExitoso || kycStatus !== 'ok'}
                 className={`
                     w-full py-5 sm:py-6 rounded-2xl font-bold text-xl sm:text-2xl
                     transition-all duration-300 transform
                     flex items-center justify-center gap-3
                     shadow-xl
-                    ${isLoading || pagoExitoso
+                    ${isLoading || pagoExitoso || kycStatus !== 'ok'
                         ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                         : 'bg-gradient-to-r from-accent-500 via-accent-400 to-accent-500 text-white hover:from-accent-600 hover:via-accent-500 hover:to-accent-600 hover:scale-[1.02] active:scale-[0.98] shadow-accent-300'
                     }

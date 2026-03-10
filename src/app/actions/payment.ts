@@ -113,19 +113,6 @@ export async function initiatePaymentSession(
             console.log('👤 [Payment] Customer:', customerName, customerPhone ? '(phone found)' : '(no phone)');
         }
 
-        // Verify user documents (required for all flows)
-        const { data: userVerifications } = await supabase
-            .from('user_verifications')
-            .select('estado, documento_url')
-            .eq('user_id', userId) as { data: any[], error: any };
-
-        const isApproved = userVerifications?.some((v: any) => v.estado === 'aprobado');
-        const hasDocuments = userVerifications?.some((v: any) => v.documento_url !== null && v.documento_url !== '');
-
-        if (!isApproved && !hasDocuments) {
-            return { success: false, error: 'Debes subir tu documento de identidad antes de pagar.' };
-        }
-
         // ========================================
         // REFERENCE GENERATION
         // ========================================

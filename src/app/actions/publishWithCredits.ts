@@ -22,6 +22,21 @@ export async function publishWithCredits(
 
     try {
         // ─────────────────────────────────────────────────────────────────────
+        // KYC GATE — Must have uploaded ID before consuming any credit
+        // "Charge first, verify later": payment is free, publication is gated.
+        // Returns 'KYC_REQUIRED' sentinel so the UI can show the upload banner.
+        // ─────────────────────────────────────────────────────────────────────
+        const { data: verifications } = await supabase
+            .from('user_verifications')
+            .select('documento_url')
+            .eq('user_id', userId);
+
+        const hasDocument = verifications?.some((v: any) => v.documento_url);
+        if (!hasDocument) {
+            return { success: false, error: 'KYC_REQUIRED' };
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
         // 1. Validate the draft exists and belongs to the user
         // ─────────────────────────────────────────────────────────────────────
         const { data: inmueble, error: imError } = await supabase
