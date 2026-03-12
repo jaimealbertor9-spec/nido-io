@@ -100,6 +100,7 @@ export default function PlanSelectionPage() {
     const [userId, setUserId] = useState<string | null>(null);
     const [userEmail, setUserEmail] = useState<string | null>(null);
     const [isRedirectingToPay, setIsRedirectingToPay] = useState(false);
+    const [ownedSlugs, setOwnedSlugs] = useState<Set<string>>(new Set());
 
     // ─────────────────────────────────────────────────────────────────────
     // Load user context and packages on mount
@@ -124,6 +125,23 @@ export default function PlanSelectionPage() {
 
                 setContext(ctx);
                 setPackages(pkgs);
+
+                // Detect which packages the user already owns (has active credits)
+                const { data: wallets } = await supabase
+                    .from('user_wallets')
+                    .select('package_id, creditos_total, creditos_usados, packages(slug)')
+                    .eq('user_id', user.id)
+                    .gt('creditos_total', 0);
+
+                if (wallets) {
+                    const slugs = new Set<string>(
+                        wallets
+                            .filter((w: any) => (w.creditos_total - w.creditos_usados) > 0 || w.creditos_total === -1)
+                            .map((w: any) => (w.packages as any)?.slug)
+                            .filter(Boolean)
+                    );
+                    setOwnedSlugs(slugs);
+                }
             } catch (err: any) {
                 setError(err.message || 'Error cargando planes');
             } finally {
@@ -339,6 +357,7 @@ export default function PlanSelectionPage() {
                                 const isFree = pkg.slug === 'free';
                                 const isDisabled = isFree && context.type === 'FREE_EXHAUSTED';
                                 const isPaid = !isFree;
+                                const isOwned = !isFree && ownedSlugs.has(pkg.slug);
 
                                 return (
                                     <div
@@ -431,6 +450,11 @@ export default function PlanSelectionPage() {
                                                 )}
                                             </button>
                                         ) : isPaid ? (
+                                            isOwned ? (
+                                                <div className="text-center py-3 px-4 rounded-full bg-gray-200 text-gray-500 font-bold text-sm cursor-not-allowed">
+                                                    ✓ Plan actual
+                                                </div>
+                                            ) : (
                                             <button
                                                 onClick={() => handlePaidPlan(pkg)}
                                                 disabled={isRedirectingToPay}
@@ -446,6 +470,7 @@ export default function PlanSelectionPage() {
                                                 )}
                                                 {isRedirectingToPay ? 'Creando sesión...' : `Comprar ${formatCOP(pkg.precio_cop)}`}
                                             </button>
+                                            )
                                         ) : (
                                             <div className="text-center py-3 px-4 rounded-full bg-gray-100 text-gray-400 font-semibold text-sm">
                                                 Próximamente

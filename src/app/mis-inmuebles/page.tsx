@@ -40,6 +40,18 @@ export default async function DashboardPage() {
     const publishContext = await getUserPublishContext(user.id);
     const isFirstTimer = publishContext.type === 'FIRST_TIMER';
 
+    // Fetch user's active wallets for available credits counter
+    const { data: wallets } = await supabase
+        .from('user_wallets')
+        .select('creditos_total, creditos_usados')
+        .eq('user_id', user.id)
+        .gt('expires_at', new Date().toISOString());
+
+    let availableCredits = 0;
+    if (wallets && wallets.length > 0) {
+        availableCredits = wallets.reduce((sum, w) => sum + Math.max(0, w.creditos_total - w.creditos_usados), 0);
+    }
+
     // Pass all data to Client Component
     return (
         <DashboardClient
@@ -47,6 +59,7 @@ export default async function DashboardPage() {
             profile={profile}
             properties={properties || []}
             isFirstTimer={isFirstTimer}
+            availableCredits={availableCredits}
         />
     );
 }

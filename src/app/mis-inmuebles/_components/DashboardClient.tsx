@@ -18,13 +18,14 @@ interface DashboardClientProps {
     profile: { nombre?: string; avatar_url?: string } | null;
     properties: any[];
     isFirstTimer?: boolean;
+    availableCredits?: number;
 }
 
 // =============================================================================
 // DASHBOARD CLIENT COMPONENT
 // Pure UI - receives all data via props, no auth/session logic
 // =============================================================================
-export default function DashboardClient({ user, profile, properties, isFirstTimer = false }: DashboardClientProps) {
+export default function DashboardClient({ user, profile, properties, isFirstTimer = false, availableCredits = 0 }: DashboardClientProps) {
     // UI State only
     const router = useRouter();
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -123,7 +124,18 @@ export default function DashboardClient({ user, profile, properties, isFirstTime
                 )}
 
                 {/* STATS CARDS */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                    {/* AVAILABLE CREDITS */}
+                    <div className="bg-white/60 p-5 rounded-2xl border border-white/50 shadow-sm backdrop-blur-md flex items-center justify-between">
+                        <div>
+                            <p className="text-sm text-gray-500 font-medium mb-1">Créditos Disponibles</p>
+                            <h3 className="text-3xl font-bold text-amber-500">{new Intl.NumberFormat('es-CO').format(availableCredits)}</h3>
+                        </div>
+                        <div className="p-3 bg-amber-100 rounded-xl">
+                            <Zap className="w-6 h-6 text-amber-500" />
+                        </div>
+                    </div>
+                    {/* TOTAL PROPERTIES */}
                     <div className="bg-white/60 p-5 rounded-2xl border border-white/50 shadow-sm backdrop-blur-md flex items-center justify-between">
                         <div>
                             <p className="text-sm text-gray-500 font-medium mb-1">Total Propiedades</p>

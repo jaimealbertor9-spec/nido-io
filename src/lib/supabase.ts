@@ -52,7 +52,7 @@ export interface Inmueble {
     inmueble_imagenes?: { url: string }[];
 }
 
-export type TipoNegocio = 'venta' | 'arriendo';
+export type TipoNegocio = 'venta' | 'arriendo' | 'dias';
 
 export interface InmuebleFormData {
     barrio: string;

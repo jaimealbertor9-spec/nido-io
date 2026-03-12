@@ -60,7 +60,7 @@ export async function initiatePaymentSession(
             throw new Error("La configuración del servidor está incompleta (Falta Llave Pública Wompi).");
         }
 
-        const integritySecret = process.env.WOMPI_INTEGRITY_SECRET || process.env.NEXT_PUBLIC_WOMPI_INTEGRITY_SECRET;
+        const integritySecret = (process.env.WOMPI_INTEGRITY_SECRET || process.env.NEXT_PUBLIC_WOMPI_INTEGRITY_SECRET || '').trim();
 
         console.log('🚀 [Payment] Iniciando sesión para:', userId);
         console.log('🌐 [Payment] Base URL:', getBaseUrl());
@@ -123,11 +123,6 @@ export async function initiatePaymentSession(
 
         const finalAmountCents = amountCOP ? Math.round(amountCOP * 100) : 1000000;
 
-        // Generate integrity signature
-        const signatureChain = `${reference}${finalAmountCents}${CURRENCY}${integritySecret}`;
-        const signature = createHash('sha256').update(signatureChain).digest('hex');
-        console.log('🔐 [Payment] Signature generated for reference:', reference);
-
         // Build dynamic redirect URL
         const baseUrl = getBaseUrl();
         const redirectUrl = isStandalone
@@ -135,53 +130,42 @@ export async function initiatePaymentSession(
             : customRedirectUrl || `${baseUrl}/publicar/exito?draftId=${propertyId}`;
         console.log('🔗 [Payment] Redirect URL:', redirectUrl);
 
-        // Create Payment Link via Wompi API
-        console.log('📡 [Payment] Calling Wompi Payment Links API...');
-
-        const paymentLinkPayload: any = {
-            name: isStandalone
-                ? `Nido ${packageSlug ? packageSlug.charAt(0).toUpperCase() + packageSlug.slice(1) : 'Créditos'}`
-                : `Nido ${packageSlug ? packageSlug.charAt(0).toUpperCase() + packageSlug.slice(1) : 'Publicación'} - ${propertyTitle}`,
-            description: isStandalone
-                ? `Compra de créditos Nido.io (Plan ${packageSlug || 'desconocido'})`
-                : `Publicación de inmueble en Nido.io${packageSlug ? ` (Plan ${packageSlug})` : ''}`,
-            single_use: true,
-            collect_shipping: false,
-            currency: CURRENCY,
-            amount_in_cents: finalAmountCents,
-            redirect_url: redirectUrl
-        };
-
-        // NOTE: customer_data is OPTIONAL for payment_links
-        // We skip it to avoid 422 validation errors with customer_references format
-        // The reference is stored in our DB and passed via redirect_url query params
-
-        console.log('📦 [Payment] Payload:', JSON.stringify(paymentLinkPayload, null, 2));
-
-        const wompiResponse = await fetch(`${getWompiApiBase()}/payment_links`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${privateKey}`
-            },
-            body: JSON.stringify(paymentLinkPayload)
-        });
-
-        const responseText = await wompiResponse.text();
-
-        if (!wompiResponse.ok) {
-            console.error('❌ [Payment] Wompi API Error:', wompiResponse.status, responseText);
-            throw new Error(`Wompi API Error ${wompiResponse.status}: ${responseText}`);
+        // ─────────────────────────────────────────────────────────────────────
+        // DIRECT WEB CHECKOUT URL (no API call)
+        // Wompi's /p/ endpoint returns our exact reference unchanged in the webhook.
+        // Integrity signature: SHA256(reference + amount_in_cents + "COP" + secret)
+        // ─────────────────────────────────────────────────────────────────────
+        if (!integritySecret) {
+            throw new Error('La configuración del servidor está incompleta (Falta WOMPI_INTEGRITY_SECRET).');
         }
 
-        const wompiData = JSON.parse(responseText);
-        console.log('✅ [Payment] Wompi Payment Link created:', wompiData.data?.id);
+        const signatureChain = `${reference}${finalAmountCents}${CURRENCY}${integritySecret}`;
+        const integrityHash = createHash('sha256').update(signatureChain).digest('hex');
+        console.log('🔐 [Payment] Integrity hash computed for reference:', reference);
 
-        // The checkout URL from Payment Links API
-        const checkoutUrl = `https://checkout.wompi.co/l/${wompiData.data.id}`;
+        const isLocal = redirectUrl.includes('localhost');
 
-        // 8. Save payment record to DB
-        const { error: insertError } = await supabase
+        const baseParams = new URLSearchParams({
+            'public-key': publicKey,
+            'currency': CURRENCY,
+            'amount-in-cents': String(finalAmountCents),
+            'reference': reference,
+        });
+
+        // WAF SSRF Protection: Wompi blocks 'localhost'. Omit redirect-url in dev.
+        if (!isLocal) {
+            baseParams.append('redirect-url', redirectUrl);
+        }
+
+        // Append signature:integrity manually — URLSearchParams encodes ':' to '%3A' which Wompi's WAF rejects with 403
+        const checkoutUrl = `https://checkout.wompi.co/p/?${baseParams.toString()}&signature:integrity=${integrityHash}`;
+        console.log('🔗 [Payment] Direct Web Checkout URL built (no API call)');
+
+        // ─────────────────────────────────────────────────────────────────────
+        // INSERT pagos row BEFORE redirecting the user
+        // throwOnError() → any DB failure throws into the outer catch block
+        // ─────────────────────────────────────────────────────────────────────
+        const { data: insertedPago } = await supabase
             .from('pagos')
             .insert({
                 usuario_id: userId,
@@ -189,30 +173,23 @@ export async function initiatePaymentSession(
                 referencia_pedido: reference,
                 monto: finalAmountCents / 100,
                 estado: 'pendiente',
-                metodo_pago: 'wompi_link',
+                metodo_pago: 'wompi_checkout',
                 datos_transaccion: {
                     user_email: userEmail,
-                    wompi_link_id: wompiData.data.id,
-                    redirect_url: redirectUrl,
-                    signature: signature,
-                    package_slug: packageSlug || null
+                    package_slug: packageSlug || null,
+                    user_id: userId,
+                    redirect_url: redirectUrl
                 }
-            });
+            })
+            .select('id, referencia_pedido')
+            .single()
+            .throwOnError();
 
-        if (insertError) {
-            console.error('❌ [Payment] DB Insert error:', insertError);
-            return { success: false, error: `DB Error: ${insertError.message}` };
-        }
-
-        console.log('🔗 [Payment] Generated Wompi Checkout URL:', checkoutUrl);
+        console.log('✅ [Payment] VERIFIED: pagos row exists in DB | ID:', insertedPago?.id, '| Reference:', insertedPago?.referencia_pedido);
 
         return {
             success: true,
-            data: {
-                checkoutUrl,
-                reference,
-                wompiLinkId: wompiData.data.id
-            }
+            data: { checkoutUrl, reference }
         };
 
     } catch (error: any) {

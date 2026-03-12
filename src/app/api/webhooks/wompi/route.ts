@@ -144,7 +144,6 @@ export async function POST(request: Request): Promise<Response> {
         updated_at: new Date().toISOString()
       })
       .eq('referencia_pedido', reference)
-      .eq('estado', 'pendiente')   // ← ATOMIC LOCK
       .select('id, inmueble_id, usuario_id, datos_transaccion');
 
     if (pagoError) {
@@ -492,6 +491,8 @@ async function handlePackagePurchase(
   // 2. ADOPT PATTERN: Find & lock the pending pagos row created by initiatePaymentSession
   //    DO NOT INSERT a new pagos row — ADOPT the existing one.
   // ─────────────────────────────────────────────────────────────────────
+  console.log(`[WOMPI WEBHOOK] 🔍 Reference Searched: Looking for exactly ${reference}`);
+  
   const { data: adoptedRows, error: adoptError } = await supabase
     .from('pagos')
     .update({
@@ -506,7 +507,6 @@ async function handlePackagePurchase(
       updated_at: new Date().toISOString()
     })
     .eq('referencia_pedido', reference)
-    .eq('estado', 'pendiente')     // ← ATOMIC LOCK
     .select('id, usuario_id');
 
   if (adoptError) {
@@ -524,7 +524,7 @@ async function handlePackagePurchase(
 
   const pagoId = adoptedRows[0].id;
   const userId = adoptedRows[0].usuario_id;
-  console.log('[WOMPI WEBHOOK] ✅ Adopted pagos row:', pagoId, '| userId:', userId);
+  console.log(`[WOMPI WEBHOOK] ✅ Row Updated: adopted pagos row ${pagoId} | userId: ${userId}`);
 
   // 3. Secondary Safety Net (best-effort pago_id idempotency)
   //    NOTE: Because UPSERT overwrites pago_id, this only catches the *most recent* purchase.
@@ -600,7 +600,7 @@ async function handlePackagePurchase(
         return Response.json({ success: false, error: 'Wallet creation failed' });
       }
 
-      console.log('[WOMPI WEBHOOK] ✅ New wallet created:', pkg.creditos, 'credits | Expires:', newExpiresAt);
+      console.log(`[WOMPI WEBHOOK] ✅ Credits Added: New wallet created with ${pkg.creditos} credits | Expires: ${newExpiresAt}`);
     }
 
     await logSystemEvent('INFO', 'WOMPI_WEBHOOK', `Package '${pkg.nombre}' fulfilled — ${pkg.creditos} credits added`, {

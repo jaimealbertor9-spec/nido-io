@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { getPackages } from '@/app/actions/publishContext';
 import { initiatePaymentSession } from '@/app/actions/payment';
 import { useAuth } from '@/components/AuthProvider';
+import { supabase } from '@/lib/supabase';
 import { CheckCircle, Crown, Info, Zap, ArrowRight, Loader2, PartyPopper } from 'lucide-react';
 
 export default function PlanesNidoPage() {
@@ -14,6 +15,7 @@ export default function PlanesNidoPage() {
     const [packages, setPackages] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [purchasingSlug, setPurchasingSlug] = useState<string | null>(null);
+    const [ownedSlugs, setOwnedSlugs] = useState<Set<string>>(new Set());
     const showSuccess = searchParams.get('success') === 'true';
 
     useEffect(() => {
@@ -21,10 +23,29 @@ export default function PlanesNidoPage() {
             setLoading(true);
             const pkgs = await getPackages();
             setPackages(pkgs);
+
+            // Detect which packages the user already owns (has active credits)
+            if (user?.id) {
+                const { data: wallets } = await (supabase as any)
+                    .from('user_wallets')
+                    .select('package_id, creditos_total, creditos_usados, packages(slug)')
+                    .eq('user_id', user.id)
+                    .gt('creditos_total', 0);
+
+                if (wallets) {
+                    const slugs = new Set<string>(
+                        (wallets as Array<{ creditos_total: number; creditos_usados: number; packages: { slug: string } | null }>)
+                            .filter(w => (w.creditos_total - w.creditos_usados) > 0 || w.creditos_total === -1)
+                            .map(w => w.packages?.slug)
+                            .filter((s): s is string => typeof s === 'string')
+                    );
+                    setOwnedSlugs(slugs);
+                }
+            }
             setLoading(false);
         }
         fetchPlans();
-    }, []);
+    }, [user?.id]);
 
     const handleSelectPlan = async (pkg: any) => {
         if (!user?.id || !user?.email) {
@@ -112,6 +133,7 @@ export default function PlanesNidoPage() {
                     {paidPackages.map((pkg, idx) => {
                         const isUnlimited = pkg.slug === 'unlimited';
                         const isPopular = pkg.slug === 'silver';
+                        const isOwned = ownedSlugs.has(pkg.slug);
 
                         return (
                             <div
@@ -168,16 +190,20 @@ export default function PlanesNidoPage() {
 
                                 <button
                                     onClick={() => handleSelectPlan(pkg)}
-                                    disabled={!!purchasingSlug}
+                                    disabled={!!purchasingSlug || isOwned}
                                     className={`w-full py-3.5 px-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-md
-                                        ${isUnlimited
-                                            ? 'bg-gradient-to-r from-amber-400 to-yellow-300 text-amber-950 hover:from-amber-300 hover:to-yellow-200 hover:shadow-lg hover:shadow-amber-500/20'
-                                            : 'bg-[#1A56DB] text-white hover:bg-blue-700 hover:shadow-lg hover:shadow-blue-500/20'
+                                        ${isOwned
+                                            ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                                            : isUnlimited
+                                                ? 'bg-gradient-to-r from-amber-400 to-yellow-300 text-amber-950 hover:from-amber-300 hover:to-yellow-200 hover:shadow-lg hover:shadow-amber-500/20'
+                                                : 'bg-[#1A56DB] text-white hover:bg-blue-700 hover:shadow-lg hover:shadow-blue-500/20'
                                         }
-                                        ${purchasingSlug ? 'opacity-60 cursor-not-allowed' : ''}
+                                        ${purchasingSlug && !isOwned ? 'opacity-60 cursor-not-allowed' : ''}
                                     `}
                                 >
-                                    {purchasingSlug === pkg.slug ? (
+                                    {isOwned ? (
+                                        '✓ Plan actual'
+                                    ) : purchasingSlug === pkg.slug ? (
                                         <><Loader2 className="w-4 h-4 animate-spin" /> Procesando...</>
                                     ) : (
                                         <>Adquirir Plan <ArrowRight className="w-4 h-4" /></>

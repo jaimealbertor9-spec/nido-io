@@ -74,7 +74,7 @@ export async function getUserPublishContext(userId: string): Promise<PublishCont
       )
     `)
         .eq('user_id', userId)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: true });
 
     if (wallets) {
         for (const wallet of wallets) {
