@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { createHash, timingSafeEqual } from 'crypto';
 import { getServiceRoleClient } from '@/lib/supabase-admin';
 import { resend } from '@/lib/resend';
 import { PaymentSuccessEmail } from '@/components/emails/PaymentSuccessEmail';
@@ -30,6 +30,26 @@ export async function POST(request: Request): Promise<Response> {
     console.log('[WOMPI WEBHOOK] Event type:', evento.event);
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // STEP 1.5: REPLAY ATTACK PROTECTION (72-hour Edge-Level TTL)
+    // ═══════════════════════════════════════════════════════════════════════════
+    const rawTimestamp = evento.timestamp;
+
+    if (!Number.isFinite(rawTimestamp) || rawTimestamp <= 0) {
+      await logSystemEvent('WARN', 'WOMPI_WEBHOOK', 'Invalid timestamp type/value', { timestamp: rawTimestamp });
+      return Response.json({ error: 'Invalid Timestamp' }, { status: 400 });
+    }
+
+    const timestampMs = String(rawTimestamp).length === 10 ? rawTimestamp * 1000 : rawTimestamp;
+    const maxAgeMs = 72 * 60 * 60 * 1000; // 72 hours window for Wompi retries
+
+    if (Date.now() - timestampMs > maxAgeMs) {
+      await logSystemEvent('WARN', 'WOMPI_WEBHOOK', 'Stale webhook payload rejected (Replay Protection)', {
+        timestamp: rawTimestamp
+      });
+      return Response.json({ error: 'Payload Expired' }, { status: 400 });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // STEP 2: STRICT SIGNATURE EXTRACTION (Fail-Closed Gate #2)
     // ═══════════════════════════════════════════════════════════════════════════
     const checksum = evento.signature?.checksum;
@@ -49,15 +69,31 @@ export async function POST(request: Request): Promise<Response> {
     let signatureString = '';
 
     // Build signature string from properties
-    for (const prop of properties) {
-      const value = prop.split('.').reduce((obj: any, key: string) => obj?.[key], evento.data);
-      signatureString += value;
+    try {
+      for (const prop of properties) {
+        const value = prop.split('.').reduce((obj: any, key: string) => {
+          if (obj === undefined || obj === null) throw new Error(`Missing path: ${key}`);
+          return obj[key];
+        }, evento.data);
+
+        if (value === undefined) throw new Error(`Undefined value at path: ${prop}`);
+        signatureString += value;
+      }
+      signatureString += evento.timestamp + WOMPI_EVENTS_SECRET;
+    } catch (error: any) {
+      await logSystemEvent('ERROR', 'WOMPI_WEBHOOK', 'Malformed payload during signature extraction', { error: error.message });
+      return Response.json({ error: 'Malformed Signature Payload' }, { status: 400 });
     }
-    signatureString += evento.timestamp + WOMPI_EVENTS_SECRET;
 
     const calculatedChecksum = createHash('sha256').update(signatureString).digest('hex');
 
-    if (calculatedChecksum !== checksum) {
+    const validChecksumBuffer = Buffer.from(calculatedChecksum, 'hex');
+    const providedChecksumBuffer = Buffer.from(checksum, 'hex');
+
+    if (
+      validChecksumBuffer.length !== providedChecksumBuffer.length ||
+      !timingSafeEqual(validChecksumBuffer, providedChecksumBuffer)
+    ) {
       await logSystemEvent('ERROR', 'WOMPI_WEBHOOK', 'Invalid Signature - potential spoofing attempt BLOCKED', {
         event_type: evento.event
       });
@@ -106,148 +142,91 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // STEP 3.5: IDEMPOTENCY CHECK
-    // If this transaction.id has already been processed as 'aprobado',
-    // return 200 immediately to prevent duplicate business logic.
+    // STEP 1: READ PENDING PAGOS ROW (SELECT — do NOT update yet)
     // ═══════════════════════════════════════════════════════════════════
-    const { data: existingPayment } = await supabase
-      .from('pagos')
-      .select('id, estado')
-      .eq('wompi_transaction_id', id)
-      .maybeSingle();
-
-    if (existingPayment && existingPayment.estado === 'aprobado') {
-      await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Idempotency: transaction already processed - skipping', {
-        transactionId: id,
-        pagoId: existingPayment.id,
-        reference
-      });
-      return Response.json({
-        success: true,
-        message: 'Transaction already processed (idempotent)',
-        pagoId: existingPayment.id
-      });
-    }
-
-    // ─────────────────────────────────────────────────────────────────────
-    // STEP 4A: ATOMIC LOCK — UPDATE PAYMENT RECORD (pagos table)
-    // Uses .eq('estado','pendiente') to prevent race condition with browser.
-    // If 0 rows returned, another thread (browser) already approved it.
-    // ─────────────────────────────────────────────────────────────────────
     console.log('[WOMPI WEBHOOK] 🔍 Looking for pending payment with reference:', reference);
 
-    const { data: lockedPagos, error: pagoError } = await supabase
+    const { data: pendingPagos, error: readError } = await supabase
       .from('pagos')
-      .update({
-        estado: 'aprobado',
-        wompi_transaction_id: id,
-        updated_at: new Date().toISOString()
-      })
+      .select('id, inmueble_id, usuario_id, datos_transaccion')
       .eq('referencia_pedido', reference)
-      .select('id, inmueble_id, usuario_id, datos_transaccion');
+      .eq('estado', 'pendiente');
 
-    if (pagoError) {
-      await logSystemEvent('WARN', 'WOMPI_WEBHOOK', 'Atomic lock update error', { reference, error: pagoError?.message });
+    if (readError) {
+      throw new Error(`Failed to read pagos: ${readError.message}`);
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // LOCK LOST: Browser thread already set estado=aprobado.
-    // Return 200 immediately — all business logic was handled there.
+    // NO PENDING ROW: Verify asset fulfillment before returning 200
+    // Must check the EXACT pago_id (renewal fix: IS NOT NULL is not enough)
     // ─────────────────────────────────────────────────────────────────────
-    if (!lockedPagos || lockedPagos.length === 0) {
-      await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Lock lost — browser already processed this payment (idempotent)', { reference, id });
-      console.log('[LOCK-LOST] Webhook lock lost. Browser already processed this payment.');
-      return Response.json({ success: true, message: 'Payment already processed by redirect flow (idempotent)' });
-    }
+    if (!pendingPagos || pendingPagos.length === 0) {
+      // Fetch the pagoId from the existing (non-pending) row to avoid undefined
+      const { data: existingPago } = await supabase
+        .from('pagos')
+        .select('id, inmueble_id')
+        .eq('referencia_pedido', reference)
+        .maybeSingle();
 
-    // This webhook WON the lock. Proceed with business logic.
-    const pago = lockedPagos[0];
-    await logSystemEvent('INFO', 'WOMPI_WEBHOOK', '🔒 Webhook acquired atomic lock. Processing...', {
-      pagoId: pago.id, inmuebleId: pago.inmueble_id, reference
-    });
-
-    // ─────────────────────────────────────────────────────────────────────
-    // FALLBACK PATH: No matching pagos row (missing reference linkage)
-    // Find the orphaned pending row by draftId from the redirect_url, then
-    // ADOPT it (UPDATE its referencia_pedido). NEVER blindly INSERT.
-    // ─────────────────────────────────────────────────────────────────────
-    if (!pago.inmueble_id) {
-      await logSystemEvent('WARN', 'WOMPI_WEBHOOK', 'No inmueble_id on locked row — attempting draftId adoption', { reference });
-
-      let propertyId: string | null = null;
-      const redirectUrl = transaction.redirect_url;
-
-      // Extract draftId from redirect_url (primary, reliable source)
-      if (redirectUrl && redirectUrl.includes('draftId=')) {
-        try {
-          const urlObj = new URL(redirectUrl);
-          propertyId = urlObj.searchParams.get('draftId');
-        } catch {
-          const match = redirectUrl.match(/draftId=([a-f0-9-]+)/i);
-          if (match) propertyId = match[1];
-        }
+      if (!existingPago) {
+        await logSystemEvent('ERROR', 'WOMPI_WEBHOOK', 'No pagos row found for reference at all', { reference });
+        return Response.json({ success: false, error: 'No payment record found for reference' });
       }
 
-      if (propertyId) {
-        // Find the orphaned PENDING row for this property and ADOPT it
-        const { data: orphanedPago } = await supabase
-          .from('pagos')
-          .select('id, usuario_id, datos_transaccion')
-          .eq('inmueble_id', propertyId)
-          .eq('estado', 'pendiente')
-          .order('created_at', { ascending: false })
-          .limit(1)
+      // ASSET CHECK: Does inmueble have THIS EXACT pago_id?
+      if (existingPago.inmueble_id) {
+        const { data: inmuebleCheck } = await supabase
+          .from('inmuebles')
+          .select('pago_id')
+          .eq('id', existingPago.inmueble_id)
           .maybeSingle();
 
-        if (orphanedPago) {
-          // ADOPT: link Wompi's reference to our existing row
-          await supabase
-            .from('pagos')
-            .update({
-              referencia_pedido: reference,
-              wompi_transaction_id: id,
-              estado: 'aprobado',
-              updated_at: new Date().toISOString()
-            })
-            .eq('id', orphanedPago.id)
-            .eq('estado', 'pendiente');   // ← ATOMIC LOCK on adopt
-
-          await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Orphaned pagos row adopted — reference linked', {
-            pagoId: orphanedPago.id, propertyId, reference
-          });
-
-          // Proceed with the adopted row's data
-          (pago as any).id = orphanedPago.id;
-          (pago as any).inmueble_id = propertyId;
-          (pago as any).usuario_id = orphanedPago.usuario_id;
-          (pago as any).datos_transaccion = orphanedPago.datos_transaccion;
-        } else {
-          await logSystemEvent('WARN', 'WOMPI_WEBHOOK', 'No pending row to adopt for propertyId', { propertyId, reference });
+        if (inmuebleCheck?.pago_id === existingPago.id) {
+          await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Asset verified — inmueble has this exact pago_id (idempotent)', { reference, pagoId: existingPago.id });
+          return Response.json({ success: true, message: 'Payment already processed (idempotent)' });
         }
       }
 
-      if (!pago.inmueble_id) {
-        await logSystemEvent('ERROR', 'WOMPI_WEBHOOK', 'Could not determine property from webhook — no action taken', { reference });
-        return Response.json({ success: false, error: 'Property not determinable from webhook', reference });
-      }
+      // pago_id NOT set on asset → data corruption or incomplete fulfillment
+      await logSystemEvent('ERROR', 'WOMPI_WEBHOOK', 'pagos row not pending but asset NOT fulfilled — data corruption', { reference, pagoId: existingPago.id });
+      throw new Error(`Asset fulfillment incomplete for reference ${reference}`);
     }
 
-    await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Payment updated successfully', {
+    const pago = pendingPagos[0];
+    await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Found pending payment. Starting fulfill-first flow...', {
       pagoId: pago.id, inmuebleId: pago.inmueble_id, reference
     });
 
     // ─────────────────────────────────────────────────────────────────────
-    // STEP 4B: WALLET & CREDIT MINTING BRIDGE (Finding #1)
-    // The webhook is now a full citizen of the payment bridge.
-    // Reads package_slug from datos_transaccion (preserved by JSON merge in payment.ts)
+    // REQUIRE EXPLICIT INMUEBLE_ID (Fail-Closed)
     // ─────────────────────────────────────────────────────────────────────
-    let duracionDias = 30; // default for legacy/unknown payments
+    if (!pago.inmueble_id) {
+      await logSystemEvent('ERROR', 'WOMPI_WEBHOOK', 'Could not determine property from webhook (missing inmueble_id) - no action taken', { reference });
+      return Response.json({ success: false, error: 'Property not determinable from webhook', reference });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // STEP 2: FULFILL ASSET FIRST (with atomic concurrency guard)
+    // ═══════════════════════════════════════════════════════════════════
+
+    // 2a. Update inmueble → 'en_revision' (ONLY if pago_id is null = not yet fulfilled)
+    let duracionDias = 30;
     const storedData = pago.datos_transaccion as any;
     const packageSlug = storedData?.package_slug;
 
-    if (packageSlug && pago.usuario_id && pago.inmueble_id) {
-      console.log('[WOMPI WEBHOOK] 📦 [Bridge] Fetching package for slug:', packageSlug);
+    if (packageSlug) {
+      const { data: pkg } = await supabase
+        .from('packages')
+        .select('duracion_anuncio_dias')
+        .eq('slug', packageSlug)
+        .single();
+      if (pkg) duracionDias = pkg.duracion_anuncio_dias || 30;
+    }
 
+    const inmuebleFulfilled = await updateInmuebleAtomic(supabase, pago.inmueble_id, pago.id, duracionDias);
+
+    // 2b. Wallet/credit minting bridge (existing pago_id guard)
+    if (packageSlug && pago.usuario_id && pago.inmueble_id) {
       const { data: pkg } = await supabase
         .from('packages')
         .select('id, creditos, duracion_anuncio_dias, features')
@@ -255,9 +234,6 @@ export async function POST(request: Request): Promise<Response> {
         .single();
 
       if (pkg) {
-        duracionDias = pkg.duracion_anuncio_dias || 30;
-
-        // Idempotency guard — strictly tied to pago_id
         const { data: existingWallet } = await supabase
           .from('user_wallets')
           .select('id')
@@ -265,7 +241,7 @@ export async function POST(request: Request): Promise<Response> {
           .maybeSingle();
 
         if (existingWallet) {
-          await logSystemEvent('INFO', 'WOMPI_WEBHOOK', '[Bridge] Wallet already minted for pago_id — skipping', { pagoId: pago.id, walletId: existingWallet.id });
+          await logSystemEvent('INFO', 'WOMPI_WEBHOOK', '[Bridge] Wallet already minted for pago_id — skipping', { pagoId: pago.id });
         } else {
           const { data: newWallet, error: walletErr } = await supabase
             .from('user_wallets')
@@ -281,60 +257,61 @@ export async function POST(request: Request): Promise<Response> {
 
           if (walletErr || !newWallet) {
             await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', '[Bridge] WALLET CREATION FAILED', { pagoId: pago.id, error: walletErr?.message });
-          } else {
-            await logSystemEvent('INFO', 'WOMPI_WEBHOOK', `[Bridge] Wallet minted: ${newWallet.id} | Credits: ${pkg.creditos}`, { pagoId: pago.id });
+            throw new Error(`Wallet creation failed: ${walletErr?.message}`);
+          }
 
-            const now = new Date();
-            const expiration = new Date(now);
-            expiration.setDate(expiration.getDate() + duracionDias);
+          await logSystemEvent('INFO', 'WOMPI_WEBHOOK', `[Bridge] Wallet minted: ${newWallet.id}`, { pagoId: pago.id });
 
-            const { error: lcError } = await supabase
-              .from('listing_credits')
-              .insert({
-                user_id: pago.usuario_id,
-                inmueble_id: pago.inmueble_id,
-                wallet_id: newWallet.id,
-                features_snapshot: pkg.features || {},
-                fecha_publicacion: now.toISOString(),
-                fecha_expiracion: expiration.toISOString(),
-              });
+          const now = new Date();
+          const expiration = new Date(now);
+          expiration.setDate(expiration.getDate() + duracionDias);
 
-            if (lcError) {
-              await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', '[Bridge] listing_credits FAILED — rolling back wallet', { walletId: newWallet.id, error: lcError.message });
-              try {
-                await supabase.from('user_wallets').delete().eq('id', newWallet.id);
-              } catch (deleteError: any) {
-                console.error('[BRIDGE-CRITICAL] ORPHANED WALLET DETECTED. Manual cleanup required for wallet ID:', newWallet.id, deleteError);
-              }
-            } else {
-              await logSystemEvent('INFO', 'WOMPI_WEBHOOK', '[Bridge] listing_credit minted', { inmuebleId: pago.inmueble_id, expires: expiration.toISOString() });
+          const { error: lcError } = await supabase
+            .from('listing_credits')
+            .insert({
+              user_id: pago.usuario_id,
+              inmueble_id: pago.inmueble_id,
+              wallet_id: newWallet.id,
+              features_snapshot: pkg.features || {},
+              fecha_publicacion: now.toISOString(),
+              fecha_expiracion: expiration.toISOString(),
+            });
+
+          if (lcError) {
+            await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', '[Bridge] listing_credits FAILED — rolling back wallet', { walletId: newWallet.id, error: lcError.message });
+            try { await supabase.from('user_wallets').delete().eq('id', newWallet.id); } catch (e: any) {
+              console.error('[BRIDGE-CRITICAL] ORPHANED WALLET:', newWallet.id, e);
             }
+            throw new Error(`Listing credits creation failed: ${lcError.message}`);
           }
         }
-      } else {
-        await logSystemEvent('WARN', 'WOMPI_WEBHOOK', '[Bridge] Package not found for slug', { packageSlug });
       }
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // STEP 4C: UPDATE INMUEBLE (with dynamic duration from package)
-    // ─────────────────────────────────────────────────────────────────────
-    if (pago.inmueble_id) {
-      const updateOk = await updateInmueble(supabase, pago.inmueble_id, pago.id, duracionDias);
-      if (!updateOk) {
-        await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', 'PAYMENT RECORDED BUT PROPERTY UPDATE FAILED — requires manual intervention', {
-          pagoId: pago.id, inmuebleId: pago.inmueble_id, reference
-        });
-      }
-    } else {
-      await logSystemEvent('WARN', 'WOMPI_WEBHOOK', 'No inmueble_id associated with payment', {
-        pagoId: pago.id, reference
-      });
+    // ═══════════════════════════════════════════════════════════════════
+    // STEP 3: CLOSE PAYMENT SECOND (only after asset is fulfilled)
+    // ═══════════════════════════════════════════════════════════════════
+    const { error: closeError } = await supabase
+      .from('pagos')
+      .update({
+        estado: 'aprobado',
+        wompi_transaction_id: id,
+        updated_at: new Date().toISOString()
+      })
+      .eq('referencia_pedido', reference)
+      .eq('estado', 'pendiente');
+
+    if (closeError) {
+      throw new Error(`Failed to close payment: ${closeError.message}`);
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // STEP 5: SEND ONE CONFIRMATION EMAIL
-    // ─────────────────────────────────────────────────────────────────────
+    await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Payment closed AFTER asset fulfillment', {
+      pagoId: pago.id, inmuebleId: pago.inmueble_id, reference
+    });
+
+    // ═══════════════════════════════════════════════════════════════════
+    // STEP 4: SEND ONE CONFIRMATION EMAIL (best-effort, never throws)
+    // ═══════════════════════════════════════════════════════════════════
     let propertyName: string | undefined;
     let propertyLocation: string | undefined;
     let propertyPrice: number | undefined;
@@ -374,29 +351,28 @@ export async function POST(request: Request): Promise<Response> {
       error: error.message,
       stack: error.stack?.substring(0, 500)
     });
-    // Return 200 to prevent Wompi retries (we'll handle it manually if needed)
+    // Return 500 to allow Wompi to retry the webhook
     return Response.json({
       success: false,
-      error: 'Internal processing error',
-      note: 'Acknowledged to prevent retries'
-    });
+      error: 'Internal server error'
+    }, { status: 500 });
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HELPER: Update Inmueble after successful payment
-// Returns true if update succeeded, false if it failed.
-// Email sending has been REMOVED from here to prevent duplicates.
-// The main flow is the single source of email sending.
+// HELPER: Update Inmueble with ATOMIC CONCURRENCY GUARD
+// Uses .is('pago_id', null) so only the first thread can fulfill.
+// Returns true if this call fulfilled it, false if already fulfilled (safe no-op).
+// Throws on DB errors to trigger 500 → Wompi retries.
 // ─────────────────────────────────────────────────────────────────────────────
-async function updateInmueble(supabase: any, inmuebleId: string, pagoId: string | undefined, duracionDias: number = 30): Promise<boolean> {
+async function updateInmuebleAtomic(supabase: any, inmuebleId: string, pagoId: string, duracionDias: number = 30): Promise<boolean> {
   const now = new Date();
   const expiration = new Date(now);
-  expiration.setDate(expiration.getDate() + duracionDias); // #5 Fix: dynamic duration
+  expiration.setDate(expiration.getDate() + duracionDias);
 
-  console.log('[WOMPI WEBHOOK] 📝 Updating inmueble:', inmuebleId, '| Duration:', duracionDias, 'days');
+  console.log('[WOMPI WEBHOOK] 📝 Fulfilling inmueble (atomic):', inmuebleId, '| Duration:', duracionDias, 'days');
 
-  const { error: inmuebleError } = await supabase
+  const { data: updatedRows, error: inmuebleError } = await supabase
     .from('inmuebles')
     .update({
       estado: 'en_revision',
@@ -405,14 +381,21 @@ async function updateInmueble(supabase: any, inmuebleId: string, pagoId: string 
       fecha_expiracion: expiration.toISOString(),
       updated_at: now.toISOString()
     })
-    .eq('id', inmuebleId);
+    .eq('id', inmuebleId)
+    .or(`pago_id.is.null,pago_id.neq.${pagoId}`)  // ← ATOMIC GUARD: allows renewals, blocks concurrent double-spend
+    .select('id');
 
   if (inmuebleError) {
-    console.error('[WOMPI WEBHOOK] ❌ Failed to update inmueble:', inmuebleError);
+    throw new Error(`Failed to fulfill inmueble ${inmuebleId}: ${inmuebleError.message}`);
+  }
+
+  if (!updatedRows || updatedRows.length === 0) {
+    console.log('[WOMPI WEBHOOK] ⚡ Inmueble already fulfilled by another thread (atomic no-op)');
+    await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Inmueble already fulfilled (atomic guard)', { inmuebleId, pagoId });
     return false;
   }
 
-  console.log('[WOMPI WEBHOOK] ✅ Inmueble updated to en_revision | Expiration:', expiration.toISOString());
+  console.log('[WOMPI WEBHOOK] ✅ Inmueble fulfilled to en_revision | Expiration:', expiration.toISOString());
   return true;
 }
 
@@ -488,12 +471,148 @@ async function handlePackagePurchase(
   }
 
   // ─────────────────────────────────────────────────────────────────────
-  // 2. ADOPT PATTERN: Find & lock the pending pagos row created by initiatePaymentSession
-  //    DO NOT INSERT a new pagos row — ADOPT the existing one.
+  // 2. READ PENDING PAGOS ROW (SELECT — do NOT update yet)
   // ─────────────────────────────────────────────────────────────────────
   console.log(`[WOMPI WEBHOOK] 🔍 Reference Searched: Looking for exactly ${reference}`);
-  
-  const { data: adoptedRows, error: adoptError } = await supabase
+
+  const { data: pendingPkgRows, error: readPkgError } = await supabase
+    .from('pagos')
+    .select('id, usuario_id')
+    .eq('referencia_pedido', reference)
+    .eq('estado', 'pendiente');
+
+  if (readPkgError) {
+    throw new Error(`Failed to read pagos for package: ${readPkgError.message}`);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // NO PENDING ROW: Verify asset before returning 200
+  // Secondary SELECT to get pagoId (avoids undefined / infinite loop)
+  // ─────────────────────────────────────────────────────────────────────
+  if (!pendingPkgRows || pendingPkgRows.length === 0) {
+    const { data: existingPkgPago } = await supabase
+      .from('pagos')
+      .select('id')
+      .eq('referencia_pedido', reference)
+      .maybeSingle();
+
+    if (!existingPkgPago) {
+      await logSystemEvent('ERROR', 'WOMPI_WEBHOOK', 'No pagos row found for package reference', { reference });
+      return Response.json({ success: false, error: 'No payment record for package reference' });
+    }
+
+    // ASSET CHECK: Does a wallet exist for THIS EXACT pago_id?
+    const { data: assetWallet } = await supabase
+      .from('user_wallets')
+      .select('id')
+      .eq('pago_id', existingPkgPago.id)
+      .maybeSingle();
+
+    if (assetWallet) {
+      await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Asset verified — wallet has this exact pago_id (idempotent)', { reference, pagoId: existingPkgPago.id });
+      return Response.json({ success: true, message: 'Package already fulfilled (idempotent)' });
+    }
+
+    await logSystemEvent('ERROR', 'WOMPI_WEBHOOK', 'pagos not pending but wallet NOT fulfilled — data corruption', { reference, pagoId: existingPkgPago.id });
+    throw new Error(`Package asset fulfillment incomplete for reference ${reference}`);
+  }
+
+  const pagoId = pendingPkgRows[0].id;
+  const userId = pendingPkgRows[0].usuario_id;
+  console.log(`[WOMPI WEBHOOK] ✅ Found pending pagos row ${pagoId} | userId: ${userId}`);
+
+  // ─────────────────────────────────────────────────────────────────────
+  // 3. ASSET IDEMPOTENCY CHECK: user_wallets WHERE pago_id = this pagoId
+  // ─────────────────────────────────────────────────────────────────────
+  const { data: existingWalletForPago } = await supabase
+    .from('user_wallets')
+    .select('id')
+    .eq('pago_id', pagoId)
+    .maybeSingle();
+
+  if (existingWalletForPago) {
+    await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Asset guard: wallet already exists for this exact pago_id — skipping to close', { pagoId });
+  } else {
+    // ─────────────────────────────────────────────────────────────────────
+    // 4. FULFILL ASSET (with atomic concurrency guards)
+    // ─────────────────────────────────────────────────────────────────────
+    if (pkg.tipo === 'paquete') {
+      const durationDays = pkg.duracion_anuncio_dias || 30;
+      const newExpiresAt = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
+
+      const { data: existingWallet } = await supabase
+        .from('user_wallets')
+        .select('id, creditos_total, expires_at')
+        .eq('user_id', userId)
+        .eq('package_id', pkg.id)
+        .maybeSingle();
+
+      if (existingWallet) {
+        // ROLLOVER: Atomic RPC with IS DISTINCT FROM guard
+        const { error: rpcError } = await supabase.rpc('increment_wallet_credits', {
+          p_wallet_id: existingWallet.id,
+          p_credits: pkg.creditos,
+          p_expires_at: newExpiresAt,
+          p_pago_id: pagoId
+        });
+
+        if (rpcError) {
+          await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', 'WALLET ROLLOVER RPC FAILED', { pagoId, userId, error: rpcError.message });
+          throw new Error(`Wallet rollover RPC failed: ${rpcError.message}`);
+        }
+        console.log('[WOMPI WEBHOOK] 🔄 Wallet rolled over atomically via RPC');
+      } else {
+        // FIRST PURCHASE: Insert new wallet
+        const { error: insertError } = await supabase
+          .from('user_wallets')
+          .insert({
+            user_id: userId,
+            package_id: pkg.id,
+            creditos_total: pkg.creditos,
+            creditos_usados: 0,
+            pago_id: pagoId,
+            expires_at: newExpiresAt
+          });
+
+        if (insertError) {
+          await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', 'WALLET CREATION FAILED', { pagoId, userId, error: insertError.message });
+          throw new Error(`Wallet creation failed: ${insertError.message}`);
+        }
+        console.log(`[WOMPI WEBHOOK] ✅ New wallet: ${pkg.creditos} credits | Expires: ${newExpiresAt}`);
+      }
+
+      await logSystemEvent('INFO', 'WOMPI_WEBHOOK', `Package '${pkg.nombre}' fulfilled — ${pkg.creditos} credits`, { pagoId, userId, packageSlug });
+
+    } else if (pkg.tipo === 'suscripcion') {
+      const fechaInicio = new Date();
+      const fechaFin = new Date();
+      fechaFin.setDate(fechaFin.getDate() + 30);
+
+      const { error: subError } = await supabase
+        .from('user_subscriptions')
+        .insert({
+          user_id: userId,
+          package_id: pkg.id,
+          estado: 'activa',
+          fecha_inicio: fechaInicio.toISOString(),
+          fecha_fin: fechaFin.toISOString(),
+          auto_renewal: true,
+          pago_id: pagoId
+        });
+
+      if (subError) {
+        await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', 'SUBSCRIPTION CREATION FAILED', { pagoId, userId, error: subError.message });
+        throw new Error(`Subscription creation failed: ${subError.message}`);
+      }
+
+      await logSystemEvent('INFO', 'WOMPI_WEBHOOK', `Subscription '${pkg.nombre}' activated`, { pagoId, userId, packageSlug });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // 5. CLOSE PAYMENT SECOND (only after asset is fulfilled)
+  // ─────────────────────────────────────────────────────────────────────
+  const { error: closePkgError } = await supabase
     .from('pagos')
     .update({
       estado: 'aprobado',
@@ -507,137 +626,16 @@ async function handlePackagePurchase(
       updated_at: new Date().toISOString()
     })
     .eq('referencia_pedido', reference)
-    .select('id, usuario_id');
+    .eq('estado', 'pendiente');
 
-  if (adoptError) {
-    await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', 'Failed to adopt pagos row for package', {
-      reference, error: adoptError.message
-    });
-    return Response.json({ success: false, error: 'Failed to adopt payment record' });
+  if (closePkgError) {
+    throw new Error(`Failed to close package payment: ${closePkgError.message}`);
   }
 
-  if (!adoptedRows || adoptedRows.length === 0) {
-    console.log('[LOCK-LOST] Package webhook lock lost for reference:', reference);
-    await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Package payment lock lost (idempotent)', { reference, transactionId });
-    return Response.json({ success: true, message: 'Package payment already processed (idempotent)' });
-  }
-
-  const pagoId = adoptedRows[0].id;
-  const userId = adoptedRows[0].usuario_id;
-  console.log(`[WOMPI WEBHOOK] ✅ Row Updated: adopted pagos row ${pagoId} | userId: ${userId}`);
-
-  // 3. Secondary Safety Net (best-effort pago_id idempotency)
-  //    NOTE: Because UPSERT overwrites pago_id, this only catches the *most recent* purchase.
-  //    The atomic lock on pagos is the PRIMARY idempotency source.
-  // ─────────────────────────────────────────────────────────────────────
-  const { data: existingWalletForPago } = await supabase
-    .from('user_wallets')
-    .select('id')
-    .eq('pago_id', pagoId)
-    .maybeSingle();
-
-  if (existingWalletForPago) {
-    await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Secondary guard: wallet already exists for pago_id (idempotent)', { pagoId });
-    return Response.json({ success: true, message: 'Wallet already minted for this payment' });
-  }
+  await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Package payment closed AFTER asset fulfillment', { pagoId, reference });
 
   // ─────────────────────────────────────────────────────────────────────
-  // 4. Fulfill: ROLLOVER for wallet (paquete) or subscription
-  // ─────────────────────────────────────────────────────────────────────
-  if (pkg.tipo === 'paquete') {
-    const durationDays = pkg.duracion_anuncio_dias || 30;
-    const newExpiresAt = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
-
-    // Check if wallet already exists for rollover
-    const { data: existingWallet } = await supabase
-      .from('user_wallets')
-      .select('id, creditos_total, expires_at')
-      .eq('user_id', userId)
-      .eq('package_id', pkg.id)
-      .maybeSingle();
-
-    if (existingWallet) {
-      // ROLLOVER: Sum credits, extend expiration (whichever is further)
-      const newTotal = existingWallet.creditos_total + pkg.creditos;
-      const bestExpiry = existingWallet.expires_at && new Date(existingWallet.expires_at) > new Date(newExpiresAt)
-        ? existingWallet.expires_at
-        : newExpiresAt;
-
-      const { error: updateError } = await supabase
-        .from('user_wallets')
-        .update({
-          creditos_total: newTotal,
-          expires_at: bestExpiry,
-          pago_id: pagoId
-        })
-        .eq('id', existingWallet.id);
-
-      if (updateError) {
-        await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', 'PAYMENT OK BUT WALLET ROLLOVER UPDATE FAILED', {
-          pagoId, userId, error: updateError.message
-        });
-        return Response.json({ success: false, error: 'Wallet rollover failed' });
-      }
-
-      console.log('[WOMPI WEBHOOK] 🔄 Wallet rolled over:', newTotal, 'credits | Expires:', bestExpiry);
-    } else {
-      // FIRST PURCHASE: Insert new wallet
-      const { error: insertError } = await supabase
-        .from('user_wallets')
-        .insert({
-          user_id: userId,
-          package_id: pkg.id,
-          creditos_total: pkg.creditos,
-          creditos_usados: 0,
-          pago_id: pagoId,
-          expires_at: newExpiresAt
-        });
-
-      if (insertError) {
-        await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', 'PAYMENT OK BUT WALLET CREATION FAILED', {
-          pagoId, userId, error: insertError.message
-        });
-        return Response.json({ success: false, error: 'Wallet creation failed' });
-      }
-
-      console.log(`[WOMPI WEBHOOK] ✅ Credits Added: New wallet created with ${pkg.creditos} credits | Expires: ${newExpiresAt}`);
-    }
-
-    await logSystemEvent('INFO', 'WOMPI_WEBHOOK', `Package '${pkg.nombre}' fulfilled — ${pkg.creditos} credits added`, {
-      pagoId, userId, packageSlug
-    });
-
-  } else if (pkg.tipo === 'suscripcion') {
-    const fechaInicio = new Date();
-    const fechaFin = new Date();
-    fechaFin.setDate(fechaFin.getDate() + 30);
-
-    const { error: subError } = await supabase
-      .from('user_subscriptions')
-      .insert({
-        user_id: userId,
-        package_id: pkg.id,
-        estado: 'activa',
-        fecha_inicio: fechaInicio.toISOString(),
-        fecha_fin: fechaFin.toISOString(),
-        auto_renewal: true,
-        pago_id: pagoId
-      });
-
-    if (subError) {
-      await logSystemEvent('CRITICAL', 'WOMPI_WEBHOOK', 'PAYMENT OK BUT SUBSCRIPTION CREATION FAILED', {
-        pagoId, userId, error: subError.message
-      });
-      return Response.json({ success: false, error: 'Subscription creation failed' });
-    }
-
-    await logSystemEvent('INFO', 'WOMPI_WEBHOOK', `Subscription '${pkg.nombre}' activated until ${fechaFin.toISOString()}`, {
-      pagoId, userId, packageSlug
-    });
-  }
-
-  // ─────────────────────────────────────────────────────────────────────
-  // 5. Fetch user email and send confirmation
+  // 6. Email (best-effort, never throws)
   // ─────────────────────────────────────────────────────────────────────
   const { data: emailUser } = await supabase
     .from('usuarios')
