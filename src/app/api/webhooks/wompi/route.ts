@@ -378,8 +378,7 @@ async function updateInmuebleAtomic(supabase: any, inmuebleId: string, pagoId: s
       estado: 'en_revision',
       pago_id: pagoId,
       fecha_publicacion: now.toISOString(),
-      fecha_expiracion: expiration.toISOString(),
-      updated_at: now.toISOString()
+      fecha_expiracion: expiration.toISOString()
     })
     .eq('id', inmuebleId)
     .or(`pago_id.is.null,pago_id.neq.${pagoId}`)  // ← ATOMIC GUARD: allows renewals, blocks concurrent double-spend
@@ -622,8 +621,7 @@ async function handlePackagePurchase(
         package_slug: packageSlug,
         package_name: pkg.nombre,
         package_type: pkg.tipo
-      },
-      updated_at: new Date().toISOString()
+      }
     })
     .eq('referencia_pedido', reference)
     .eq('estado', 'pendiente');

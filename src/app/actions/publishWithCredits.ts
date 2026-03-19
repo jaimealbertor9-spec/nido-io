@@ -206,7 +206,6 @@ export async function publishWithCredits(
                 estado: 'en_revision',
                 fecha_publicacion: now.toISOString(),
                 fecha_expiracion: expiration.toISOString(),
-                updated_at: now.toISOString(),
             })
             .eq('id', draftId);
 

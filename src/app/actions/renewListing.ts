@@ -16,57 +16,62 @@ export async function renewListing(inmuebleId: string, userId: string) {
     const supabase = getServiceRoleClient();
 
     try {
-        const nowIso = new Date().toISOString();
-
-        // ──────────────────────────────────────────────────────────────
-        // Step 1 — Find available wallet ("Protect the User" FIFO)
-        // Fetch unexpired wallets and filter available credits in memory
-        // ──────────────────────────────────────────────────────────────
-        const { data: wallets, error: walletError } = await supabase
+        // 1. Fetch ALL unexpired-looking wallets for the user
+        const { data: allWallets, error: walletError } = await supabase
             .from('user_wallets')
             .select('id, creditos_total, creditos_usados, package_id, expires_at')
-            .eq('user_id', userId)
-            .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
-            .order('expires_at', { ascending: true, nullsFirst: false });
+            .eq('user_id', userId);
 
         if (walletError) {
             console.error('❌ [Renew] Error fetching wallets:', walletError.message);
             return { success: false, error: 'Error al buscar billetera' };
         }
 
-        // Find the first wallet that has credits available
-        const wallet = wallets?.find(w => w.creditos_total === -1 || w.creditos_total > w.creditos_usados);
+        const nowDate = new Date();
 
-        // ──────────────────────────────────────────────────────────────
-        // Step 2 — No credits → redirect to generic plans page
-        // ──────────────────────────────────────────────────────────────
-        if (!wallet) {
-            console.log('ℹ️ [Renew] No available wallet for user:', userId, '| Redirecting to generic plans');
+        // 2. Filter available and valid wallets in memory (Bulletproof Logic)
+        const validWallet = allWallets?.find(w => {
+            const hasCredits = w.creditos_total === -1 || w.creditos_total > w.creditos_usados;
+            const notExpired = !w.expires_at || new Date(w.expires_at) > nowDate;
+            return hasCredits && notExpired;
+        });
+
+        if (!validWallet) {
+            console.log('ℹ️ [Renew] No available credits found. Redirecting to plans.');
             return { success: false, redirect: '/mis-inmuebles/planes' };
         }
 
+        // Rename validWallet to wallet for compatibility with the rest of your code
+        const wallet = validWallet;
+
         // ──────────────────────────────────────────────────────────────
-        // Step 3 — Deduct 1 credit (atomic guard)
-        // For unlimited plans (creditos_total = -1), skip decrement
+        // Step 3 — Deduct 1 credit
+        // Parse numbers safely to avoid Postgres type mismatch / string concatenation
         // ──────────────────────────────────────────────────────────────
-        if (wallet.creditos_total !== -1) {
+        const totalCredits = Number(wallet.creditos_total);
+        const usedCredits = Number(wallet.creditos_usados) || 0;
+        const isUnlimited = totalCredits === -1;
+
+        if (!isUnlimited) {
             const { data: decrementResult, error: decrementError } = await supabase
                 .from('user_wallets')
                 .update({
-                    creditos_usados: wallet.creditos_usados + 1,
-                    updated_at: new Date().toISOString()
+                    creditos_usados: usedCredits + 1
                 })
                 .eq('id', wallet.id)
-                .gt('creditos_total', wallet.creditos_usados) // atomic guard: creditos_total > creditos_usados
                 .select('id');
 
-            if (decrementError || !decrementResult || decrementResult.length === 0) {
-                console.log('⚠️ [Renew] Credit decrement race lost or exhausted:', wallet.id);
+            if (decrementError) {
+                console.error('❌ [Renew] Update Error:', decrementError.message);
+                return { success: false, error: 'Error de base de datos al cobrar crédito' };
+            }
+
+            if (!decrementResult || decrementResult.length === 0) {
+                console.log('⚠️ [Renew] Wallet update affected 0 rows:', wallet.id);
                 return { success: false, redirect: '/mis-inmuebles/planes' };
             }
 
-            console.log('✅ [Renew] Credit deducted from wallet:', wallet.id,
-                `| Used: ${wallet.creditos_usados + 1}/${wallet.creditos_total}`);
+            console.log('✅ [Renew] Credit deducted from wallet:', wallet.id, `| Used: ${usedCredits + 1}/${totalCredits}`);
         } else {
             console.log('♾️ [Renew] Unlimited plan — no credit decrement');
         }
@@ -86,7 +91,7 @@ export async function renewListing(inmuebleId: string, userId: string) {
         }
 
         const durationDays = pkg.duracion_anuncio_dias || 30;
-        const now = new Date();
+        const now = nowDate;
         const newExpiration = new Date(now);
         newExpiration.setDate(newExpiration.getDate() + durationDays);
 
@@ -105,8 +110,7 @@ export async function renewListing(inmuebleId: string, userId: string) {
             await supabase
                 .from('listing_credits')
                 .update({
-                    fecha_expiracion: newExpiration.toISOString(),
-                    updated_at: now.toISOString()
+                    fecha_expiracion: newExpiration.toISOString()
                 })
                 .eq('id', existingCredit.id);
         } else {
@@ -128,8 +132,7 @@ export async function renewListing(inmuebleId: string, userId: string) {
             .from('inmuebles')
             .update({
                 estado: 'en_revision',   // MUST go through moderation queue
-                fecha_expiracion: newExpiration.toISOString(),
-                updated_at: now.toISOString()
+                fecha_expiracion: newExpiration.toISOString()
             })
             .eq('id', inmuebleId);
 
