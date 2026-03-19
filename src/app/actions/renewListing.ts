@@ -16,30 +16,32 @@ export async function renewListing(inmuebleId: string, userId: string) {
     const supabase = getServiceRoleClient();
 
     try {
+        const nowIso = new Date().toISOString();
+
         // ──────────────────────────────────────────────────────────────
         // Step 1 — Find available wallet ("Protect the User" FIFO)
-        // Debit the wallet closest to expiring first
+        // Fetch unexpired wallets and filter available credits in memory
         // ──────────────────────────────────────────────────────────────
-        const { data: wallet, error: walletError } = await supabase
+        const { data: wallets, error: walletError } = await supabase
             .from('user_wallets')
             .select('id, creditos_total, creditos_usados, package_id, expires_at')
             .eq('user_id', userId)
-            .or('creditos_total.eq.-1,creditos_total.gt.creditos_usados')
-            .or('expires_at.is.null,expires_at.gt.now()')
-            .order('expires_at', { ascending: true, nullsFirst: false })
-            .limit(1)
-            .maybeSingle();
+            .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
+            .order('expires_at', { ascending: true, nullsFirst: false });
 
         if (walletError) {
-            console.error('❌ [Renew] Error fetching wallet:', walletError.message);
+            console.error('❌ [Renew] Error fetching wallets:', walletError.message);
             return { success: false, error: 'Error al buscar billetera' };
         }
 
+        // Find the first wallet that has credits available
+        const wallet = wallets?.find(w => w.creditos_total === -1 || w.creditos_total > w.creditos_usados);
+
         // ──────────────────────────────────────────────────────────────
-        // Step 2 — No credits → redirect to plans page
+        // Step 2 — No credits → redirect to generic plans page
         // ──────────────────────────────────────────────────────────────
         if (!wallet) {
-            console.log('ℹ️ [Renew] No available wallet for user:', userId);
+            console.log('ℹ️ [Renew] No available wallet for user:', userId, '| Redirecting to generic plans');
             return { success: false, redirect: '/mis-inmuebles/planes' };
         }
 

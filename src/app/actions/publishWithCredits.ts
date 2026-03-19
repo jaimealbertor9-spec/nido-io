@@ -138,7 +138,13 @@ export async function publishWithCredits(
             }
 
             features = (freePkg.features as Record<string, boolean>) || {};
-            duracionDias = freePkg.duracion_anuncio_dias || 30;
+            // EXPLICIT 15 DAYS FALLBACK FOR FREE TIER
+            duracionDias = freePkg.duracion_anuncio_dias || 15;
+
+            // Calculate expiration specifically for the wallet
+            const now = new Date();
+            const expirationWallet = new Date(now);
+            expirationWallet.setDate(expirationWallet.getDate() + duracionDias);
 
             // Create wallet for free tier with 1 credit already consumed
             const { data: newWallet, error: walletErr } = await supabase
@@ -148,6 +154,7 @@ export async function publishWithCredits(
                     package_id: freePkg.id,
                     creditos_total: 1,
                     creditos_usados: 1,
+                    expires_at: expirationWallet.toISOString()
                 })
                 .select('id')
                 .single();
@@ -158,7 +165,7 @@ export async function publishWithCredits(
 
             effectiveWalletId = newWallet.id;
             isConsumingWalletCredit = true;
-            originalCreditosUsados = 0; // If rollback occurs, we restore to 0
+            originalCreditosUsados = 0;
         }
 
         // ─────────────────────────────────────────────────────────────────────

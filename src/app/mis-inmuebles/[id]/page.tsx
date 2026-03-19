@@ -81,13 +81,7 @@ export default function PropertyDetailsPage() {
             return; // Keep spinner alive, useEffect will re-run when authLoading changes
         }
 
-        // WATCHDOG: Force unlock after 5s if DB hangs (Vercel safety net)
-        const watchdog = setTimeout(() => {
-            if (!controller.signal.aborted) {
-                console.warn('[Details] ⚠️ Fetch timeout: Force releasing loading state after 5s');
-                setLoading(false);
-            }
-        }, 5000);
+
 
         async function fetchProperty() {
             console.log('[Details] Fetching data for ID:', propertyId);
@@ -149,7 +143,6 @@ export default function PropertyDetailsPage() {
                 console.error('[Details] Error fetching property:', err);
                 setNotFound(true);
             } finally {
-                clearTimeout(watchdog);
                 if (!cancelled) {
                     console.log('[Details] Fetch cycle complete, stopping spinner');
                     setLoading(false);
@@ -163,9 +156,8 @@ export default function PropertyDetailsPage() {
             console.log('[Details] Cleanup — aborting pending fetches');
             cancelled = true;
             controller.abort();
-            clearTimeout(watchdog);
         };
-    }, [propertyId, user, authLoading]);
+    }, [propertyId, authLoading]);
 
     const handleSignOut = async () => {
         await signOut();
