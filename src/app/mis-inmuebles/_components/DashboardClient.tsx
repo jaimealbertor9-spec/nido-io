@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { User } from '@supabase/supabase-js';
 import {
-    Home, ShieldCheck, CreditCard, Users, MapPin, MoreHorizontal, Eye, FileText, CheckCircle, Clock, Pencil, Plus, Zap, RefreshCw, Loader2, AlertTriangle, Crown, Infinity
+    Home, ShieldCheck, CreditCard, Users, MapPin, MoreHorizontal, Eye, FileText, CheckCircle, Clock, Pencil, Plus, Zap, RefreshCw, Loader2, AlertTriangle, Crown, Infinity, BarChart3
 } from 'lucide-react';
 import { renewListing } from '@/app/actions/renewListing';
 import type { UserWalletsResult, WalletSummary } from '@/app/actions/action-types';
@@ -49,33 +49,26 @@ function WalletBadge({ wallet }: { wallet: WalletSummary }) {
     }, [wallet.packageSlug]);
 
     return (
-        <div className={`${colorScheme.bg} rounded-xl p-3 border border-white/50 shadow-sm`}>
-            <div className="flex items-center justify-between mb-1">
-                <span className={`text-xs font-semibold ${colorScheme.text} truncate`}>
+        <div className={`${colorScheme.bg} rounded-lg px-3 py-2 border border-white/50 shadow-sm flex-shrink-0`}>
+            <div className="flex items-center gap-2">
+                <span className={`text-xs font-semibold ${colorScheme.text} whitespace-nowrap`}>
                     {wallet.packageName}
                 </span>
-                {isUnlimited && <Crown className={`w-4 h-4 ${colorScheme.badge}`} />}
-            </div>
-            <div className="flex items-baseline gap-1">
                 {isUnlimited ? (
-                    <span className={`text-lg font-bold ${colorScheme.text} flex items-center gap-1`}>
-                        <Infinity className="w-5 h-5" /> Sin límite
+                    <span className={`flex items-center gap-0.5 text-sm font-bold ${colorScheme.text}`}>
+                        <Infinity className="w-4 h-4" />
                     </span>
                 ) : (
-                    <>
-                        <span className={`text-lg font-bold ${colorScheme.text}`}>
-                            {wallet.creditsRemaining}
-                        </span>
-                        <span className={`text-xs ${colorScheme.badge}`}>
-                            {wallet.creditsRemaining === 1 ? 'crédito' : 'créditos'}
-                        </span>
-                    </>
+                    <span className={`text-sm font-bold ${colorScheme.text}`}>
+                        {wallet.creditsRemaining}
+                    </span>
                 )}
+                {isUnlimited && <Crown className={`w-3.5 h-3.5 ${colorScheme.badge}`} />}
             </div>
             {daysUntilExpiry !== null && daysUntilExpiry <= 7 && !isUnlimited && (
                 <p className={`text-[10px] mt-1 ${colorScheme.badge} flex items-center gap-1`}>
-                    <Clock className="w-3 h-3" />
-                    Expira en {daysUntilExpiry} {daysUntilExpiry === 1 ? 'día' : 'días'}
+                    <Clock className="w-2.5 h-2.5" />
+                    {daysUntilExpiry}d
                 </p>
             )}
         </div>
@@ -171,7 +164,7 @@ export default function DashboardClient({ user, profile, properties, isFirstTime
                                 🎁 ¡Tienes 1 publicación GRATIS disponible!
                             </h2>
                             <p className="text-blue-100 max-w-2xl text-base md:text-lg">
-                                Publica tu primer inmueble sin costo, pruébanos por 30 días y empieza a recibir interesados hoy mismo.
+                                Publica tu primer inmueble sin costo, pruébanos por 15 días y empieza a recibir interesados hoy mismo.
                             </p>
                         </div>
 
@@ -185,7 +178,7 @@ export default function DashboardClient({ user, profile, properties, isFirstTime
                 )}
 
                 {/* STATS CARDS */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8 items-start">
                     {/* AVAILABLE CREDITS - Multi-Wallet Breakdown */}
                     <div className="bg-white/60 p-5 rounded-2xl border border-white/50 shadow-sm backdrop-blur-md">
                         <div className="flex items-center justify-between mb-3">
@@ -197,7 +190,7 @@ export default function DashboardClient({ user, profile, properties, isFirstTime
 
                         {/* Wallet Breakdown - Show each plan separately */}
                         {walletsData.wallets.length > 0 && (
-                            <div className="space-y-2">
+                            <div className="flex flex-wrap gap-2">
                                 {walletsData.wallets.map((wallet) => (
                                     <WalletBadge key={wallet.walletId} wallet={wallet} />
                                 ))}
@@ -412,20 +405,20 @@ export default function DashboardClient({ user, profile, properties, isFirstTime
                     </div>
                     <p className="text-xs text-gray-500">Completa tu perfil para ganar confianza.</p>
                 </div>
-                <div className="bg-white/40 p-5 rounded-2xl hover:bg-white/60 transition-colors cursor-pointer group border border-white/40 shadow-sm backdrop-blur-sm">
+                <Link href="/mis-inmuebles/planes" className="bg-white/40 p-5 rounded-2xl hover:bg-white/60 transition-colors cursor-pointer group border border-white/40 shadow-sm backdrop-blur-sm block">
                     <div className="flex items-center mb-2">
-                        <div className="p-2 bg-purple-100 rounded-lg mr-3 group-hover:scale-110 transition-transform"><CreditCard className="text-purple-600 w-5 h-5" /></div>
-                        <h4 className="font-semibold text-sm text-gray-800">Métodos de Cobro</h4>
+                        <div className="p-2 bg-purple-100 rounded-lg mr-3 group-hover:scale-110 transition-transform"><Crown className="text-purple-600 w-5 h-5" /></div>
+                        <h4 className="font-semibold text-sm text-gray-800">Planes Nido</h4>
                     </div>
-                    <p className="text-xs text-gray-500">Configura cómo recibirás tus rentas.</p>
-                </div>
-                <div className="bg-white/40 p-5 rounded-2xl hover:bg-white/60 transition-colors cursor-pointer group border border-white/40 shadow-sm backdrop-blur-sm">
+                    <p className="text-xs text-gray-500">Destaca tus inmuebles y llega a más clientes.</p>
+                </Link>
+                <Link href="/mis-inmuebles/analiticas" className="bg-white/40 p-5 rounded-2xl hover:bg-white/60 transition-colors cursor-pointer group border border-white/40 shadow-sm backdrop-blur-sm block">
                     <div className="flex items-center mb-2">
-                        <div className="p-2 bg-orange-100 rounded-lg mr-3 group-hover:scale-110 transition-transform"><Users className="text-orange-600 w-5 h-5" /></div>
-                        <h4 className="font-semibold text-sm text-gray-800">Invitar Equipo</h4>
+                        <div className="p-2 bg-orange-100 rounded-lg mr-3 group-hover:scale-110 transition-transform"><BarChart3 className="text-orange-600 w-5 h-5" /></div>
+                        <h4 className="font-semibold text-sm text-gray-800">Analíticas</h4>
                     </div>
-                    <p className="text-xs text-gray-500">Añade administradores a tu cuenta.</p>
-                </div>
+                    <p className="text-xs text-gray-500">Mide el rendimiento y alcance de tus anuncios.</p>
+                </Link>
             </div>
 
             <footer className="w-full py-6 mt-auto text-center border-t border-gray-200/50">

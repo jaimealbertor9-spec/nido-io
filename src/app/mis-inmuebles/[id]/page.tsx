@@ -518,7 +518,7 @@ export default function PropertyDetailsPage() {
                                         Mejora tu plan para ver las estadísticas
                                     </p>
                                     <Link
-                                        href={`/publicar/planes/${property.id}`}
+                                        href="/mis-inmuebles/planes"
                                         className="px-4 py-2 bg-[#1A56DB] text-white text-xs font-bold rounded-lg hover:bg-blue-700 transition-colors shadow-sm flex items-center gap-1.5"
                                     >
                                         <Crown className="w-3.5 h-3.5" />
