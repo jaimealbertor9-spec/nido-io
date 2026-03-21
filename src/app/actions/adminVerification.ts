@@ -160,24 +160,43 @@ export async function adminApproveUser(
             return { success: false, error: verifyError.message };
         }
 
-        // 2. Activate all IN_REVIEW listings for this user
-        // V-6 FIX: Column is propietario_id (NOT usuario_id)
-        const { data: updatedListings, error: listingsError } = await supabase
+        // 2. Fetch listings to get their specific plan durations
+        const { data: listingsToActivate } = await supabase
             .from('inmuebles')
-            .update({
-                estado: 'publicado',
-                updated_at: new Date().toISOString()
-            })
+            .select(`
+                id,
+                listing_credits!inmueble_id (
+                    wallet_id,
+                    user_wallets!wallet_id (
+                        package_id,
+                        packages!package_id (duracion_anuncio_dias)
+                    )
+                )
+            `)
             .eq('propietario_id', targetUserId)
-            .eq('estado', 'en_revision')
-            .select('id');
+            .eq('estado', 'en_revision');
 
-        if (listingsError) {
-            console.error('[adminApproveUser] Listings error:', listingsError);
-            // Don't fail the whole operation if listings update fails
+        let affectedListings = 0;
+
+        if (listingsToActivate && listingsToActivate.length > 0) {
+            const now = new Date();
+            for (const item of listingsToActivate) {
+                const duration = (item.listing_credits as any)?.[0]?.user_wallets?.packages?.duracion_anuncio_dias || 30;
+                
+                const expiration = new Date(now);
+                expiration.setDate(expiration.getDate() + duration);
+
+                await supabase
+                    .from('inmuebles')
+                    .update({
+                        estado: 'publicado',
+                        fecha_publicacion: now.toISOString(),
+                        fecha_expiracion: expiration.toISOString()
+                    })
+                    .eq('id', item.id);
+            }
+            affectedListings = listingsToActivate.length;
         }
-
-        const affectedListings = updatedListings?.length || 0;
 
         // 3. Cancel any pending notification emails
         await supabase

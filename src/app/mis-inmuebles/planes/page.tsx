@@ -19,32 +19,57 @@ export default function PlanesNidoPage() {
     const showSuccess = searchParams.get('success') === 'true';
 
     useEffect(() => {
+        let isMounted = true;
+        const controller = new AbortController();
+
         async function fetchPlans() {
             setLoading(true);
-            const pkgs = await getPackages();
-            setPackages(pkgs);
 
-            // Detect which packages the user already owns (has active credits)
-            if (user?.id) {
-                const { data: wallets } = await (supabase as any)
-                    .from('user_wallets')
-                    .select('package_id, creditos_total, creditos_usados, packages(slug)')
-                    .eq('user_id', user.id)
-                    .gt('creditos_total', 0);
+            try {
+                const pkgs = await getPackages();
 
-                if (wallets) {
-                    const slugs = new Set<string>(
-                        (wallets as Array<{ creditos_total: number; creditos_usados: number; packages: { slug: string } | null }>)
-                            .filter(w => (w.creditos_total - w.creditos_usados) > 0 || w.creditos_total === -1)
-                            .map(w => w.packages?.slug)
-                            .filter((s): s is string => typeof s === 'string')
-                    );
-                    setOwnedSlugs(slugs);
+                if (!isMounted) return;
+                setPackages(pkgs);
+
+                // Detect which packages the user already owns (has active credits)
+                if (user?.id) {
+                    const { data: wallets, error } = await (supabase as any)
+                        .from('user_wallets')
+                        .select('package_id, creditos_total, creditos_usados, packages(slug)')
+                        .eq('user_id', user.id)
+                        .gt('creditos_total', 0)
+                        .abortSignal(controller.signal);
+
+                    if (!isMounted) return;
+
+                    if (wallets && !error) {
+                        const slugs = new Set<string>(
+                            (wallets as Array<{ creditos_total: number; creditos_usados: number; packages: { slug: string } | null }>)
+                                .filter(w => (w.creditos_total - w.creditos_usados) > 0 || w.creditos_total === -1)
+                                .map(w => w.packages?.slug)
+                                .filter((s): s is string => typeof s === 'string')
+                        );
+                        setOwnedSlugs(slugs);
+                    }
+                }
+            } catch (err: any) {
+                if (!isMounted || err?.name === 'AbortError') {
+                    console.log('[Planes] Fetch aborted (safe to ignore)');
+                    return;
+                }
+                console.error('[Planes] Error fetching plans:', err);
+            } finally {
+                if (isMounted) {
+                    setLoading(false);
                 }
             }
-            setLoading(false);
         }
         fetchPlans();
+
+        return () => {
+            isMounted = false;
+            controller.abort();
+        };
     }, [user?.id]);
 
     const handleSelectPlan = async (pkg: any) => {

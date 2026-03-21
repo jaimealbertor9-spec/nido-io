@@ -25,8 +25,10 @@ import {
     getUserVerificationApprovalStatus,
     type UserVerificationStatusResult
 } from '@/app/actions/inmuebleVerification';
-import { getUserPublishContext, type PublishContext } from '@/app/actions/publishContext';
+import { getUserPublishContext, getUserWallets } from '@/app/actions/publishContext';
+import { PublishContext, UserWalletsResult, WalletSummary } from '@/app/actions/action-types';
 import { publishWithCredits } from '@/app/actions/publishWithCredits';
+import WalletSelectorModal from '@/components/publicar/WalletSelectorModal';
 import StepFotos from '@/components/publicar/StepFotos';
 import InmuebleVerificationForm from '@/components/IdentityVerificationForm';
 
@@ -113,6 +115,11 @@ export default function Paso2Page() {
     const [isPublishing, setIsPublishing] = useState(false);
     const [inmuebleEstado, setInmuebleEstado] = useState<string>('borrador');
     const [publishContext, setPublishContext] = useState<PublishContext | null>(null);
+
+    // Multi-Wallet Selection States
+    const [walletsData, setWalletsData] = useState<UserWalletsResult | null>(null);
+    const [showWalletModal, setShowWalletModal] = useState(false);
+    const [selectedWalletId, setSelectedWalletId] = useState<string | null>(null);
 
     // Refs
     const hasLoadedRef = useRef(false);
@@ -213,6 +220,10 @@ export default function Paso2Page() {
                     // ── GROUP 3: Fetch publish context (wallet/credits) ──
                     const ctx = await getUserPublishContext(user.id);
                     if (!cancelled) setPublishContext(ctx);
+
+                    // ── GROUP 4: Fetch all wallets for multi-wallet selection ──
+                    const wallets = await getUserWallets(user.id);
+                    if (!cancelled) setWalletsData(wallets);
                 }
 
                 hasLoadedRef.current = true;
@@ -421,7 +432,7 @@ export default function Paso2Page() {
     };
 
     // ═══════════════════════════════════════════════════════════════
-    // PUBLISH HANDLER — PLG Freemium Logic
+    // PUBLISH HANDLER — PLG Freemium Logic with Wallet Selection
     // ═══════════════════════════════════════════════════════════════
     const handlePublish = async () => {
         console.log('🚀 [Publish] Starting publish process...');
@@ -437,6 +448,34 @@ export default function Paso2Page() {
             return;
         }
 
+        // ─────────────────────────────────────────────────────────────
+        // MULTI-WALLET CHECK: Show selector if user has multiple wallets
+        // ─────────────────────────────────────────────────────────────
+        if (walletsData && walletsData.hasMultipleWallets && !selectedWalletId) {
+            console.log('[Publish] Multiple wallets detected, showing selector...');
+            setShowWalletModal(true);
+            return;
+        }
+
+        // Proceed with publishing
+        await executePublish();
+    };
+
+    // ─────────────────────────────────────────────────────────────────────
+    // WALLET SELECTION HANDLER
+    // ─────────────────────────────────────────────────────────────────────
+    const handleWalletSelect = async (walletId: string) => {
+        console.log('[Publish] Wallet selected:', walletId);
+        setSelectedWalletId(walletId);
+        setShowWalletModal(false);
+        // Immediately proceed with publishing using selected wallet
+        await executePublish(walletId);
+    };
+
+    // ─────────────────────────────────────────────────────────────────────
+    // ACTUAL PUBLISH EXECUTION
+    // ─────────────────────────────────────────────────────────────────────
+    const executePublish = async (forceWalletId?: string) => {
         setIsPublishing(true);
         setError(null);
 
@@ -459,19 +498,34 @@ export default function Paso2Page() {
                 return;
             }
 
-            // FIRST_TIMER or HAS_CREDITS — publish instantly
-            const walletId = publishContext.type === 'HAS_CREDITS' ? publishContext.walletId : undefined;
-            const subscriptionId = publishContext.type === 'HAS_CREDITS' ? publishContext.subscriptionId : undefined;
+            // Determine wallet/subscription ID to use
+            // Priority: 1. Force-selected wallet, 2. Selected wallet from modal, 3. Auto-detected from context
+            const effectiveWalletId = forceWalletId
+                || selectedWalletId
+                || (publishContext.type === 'HAS_CREDITS' ? publishContext.walletId : undefined);
+            const effectiveSubscriptionId = publishContext.type === 'HAS_CREDITS'
+                ? publishContext.subscriptionId
+                : undefined;
 
-            console.log('📦 [Publish] Calling publishWithCredits...');
+            // FIRST_TIMER or HAS_CREDITS — publish instantly
+            console.log('📦 [Publish] Calling publishWithCredits with walletId:', effectiveWalletId);
+            
+            if (!userId) { throw new Error("User ID is required"); }
+            
             const result = await publishWithCredits(
                 propertyId,
                 userId,
-                walletId,
-                subscriptionId,
+                effectiveWalletId,
+                effectiveSubscriptionId,
             );
 
             if (!result.success) {
+                // KYC_REQUIRED is a special case — show the upload banner
+                if (result.error === 'KYC_REQUIRED') {
+                    setError('Debes subir tu documento de identidad antes de publicar. Revisa la sección de Verificación arriba.');
+                    setIsPublishing(false);
+                    return;
+                }
                 throw new Error(result.error || 'Error al publicar el inmueble');
             }
 
@@ -1072,6 +1126,19 @@ export default function Paso2Page() {
                     </div>
                 )}
             </div>
+
+            {/* ═══════════════════════════════════════════════════════════════ */}
+            {/* WALLET SELECTOR MODAL                                         */}
+            {/* ═══════════════════════════════════════════════════════════════ */}
+            {walletsData && (
+                <WalletSelectorModal
+                    isOpen={showWalletModal}
+                    onClose={() => setShowWalletModal(false)}
+                    onSelect={handleWalletSelect}
+                    wallets={walletsData.wallets}
+                    isPublishing={isPublishing}
+                />
+            )}
         </div>
     );
 }

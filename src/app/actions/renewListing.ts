@@ -110,6 +110,7 @@ export async function renewListing(inmuebleId: string, userId: string) {
             await supabase
                 .from('listing_credits')
                 .update({
+                    wallet_id: wallet.id,
                     fecha_expiracion: newExpiration.toISOString()
                 })
                 .eq('id', existingCredit.id);

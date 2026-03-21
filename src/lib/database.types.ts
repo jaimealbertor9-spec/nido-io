@@ -370,6 +370,274 @@ export type Database = {
         }
         Relationships: []
       }
+      listing_credits: {
+        Row: {
+          created_at: string | null
+          features_snapshot: Json
+          fecha_expiracion: string
+          fecha_publicacion: string
+          id: string
+          inmueble_id: string
+          subscription_id: string | null
+          user_id: string
+          wallet_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          features_snapshot?: Json
+          fecha_expiracion: string
+          fecha_publicacion?: string
+          id?: string
+          inmueble_id: string
+          subscription_id?: string | null
+          user_id: string
+          wallet_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          features_snapshot?: Json
+          fecha_expiracion?: string
+          fecha_publicacion?: string
+          id?: string
+          inmueble_id?: string
+          subscription_id?: string | null
+          user_id?: string
+          wallet_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "listing_credits_inmueble_id_fkey"
+            columns: ["inmueble_id"]
+            isOneToOne: true
+            referencedRelation: "inmuebles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "listing_credits_subscription_id_fkey"
+            columns: ["subscription_id"]
+            isOneToOne: false
+            referencedRelation: "user_subscriptions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "listing_credits_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "usuarios"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "listing_credits_wallet_id_fkey"
+            columns: ["wallet_id"]
+            isOneToOne: false
+            referencedRelation: "user_wallets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      packages: {
+        Row: {
+          activo: boolean | null
+          created_at: string | null
+          creditos: number
+          duracion_anuncio_dias: number
+          features: Json | null
+          id: string
+          nombre: string
+          precio_cop: number
+          slug: string
+          tipo: string
+          wompi_payment_link_url: string | null
+        }
+        Insert: {
+          activo?: boolean | null
+          created_at?: string | null
+          creditos?: number
+          duracion_anuncio_dias?: number
+          features?: Json | null
+          id?: string
+          nombre: string
+          precio_cop?: number
+          slug: string
+          tipo: string
+          wompi_payment_link_url?: string | null
+        }
+        Update: {
+          activo?: boolean | null
+          created_at?: string | null
+          creditos?: number
+          duracion_anuncio_dias?: number
+          features?: Json | null
+          id?: string
+          nombre?: string
+          precio_cop?: number
+          slug?: string
+          tipo?: string
+          wompi_payment_link_url?: string | null
+        }
+        Relationships: []
+      }
+      property_leads: {
+        Row: {
+          created_at: string | null
+          desbloqueado: boolean | null
+          email: string | null
+          id: string
+          inmueble_id: string
+          leido: boolean | null
+          mensaje: string | null
+          nombre: string
+          propietario_id: string
+          telefono: string
+          telefono_masked: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          desbloqueado?: boolean | null
+          email?: string | null
+          id?: string
+          inmueble_id: string
+          leido?: boolean | null
+          mensaje?: string | null
+          nombre: string
+          propietario_id: string
+          telefono: string
+        }
+        Update: {
+          created_at?: string | null
+          desbloqueado?: boolean | null
+          email?: string | null
+          id?: string
+          inmueble_id?: string
+          leido?: boolean | null
+          mensaje?: string | null
+          nombre?: string
+          propietario_id?: string
+          telefono?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_leads_inmueble_id_fkey"
+            columns: ["inmueble_id"]
+            isOneToOne: false
+            referencedRelation: "inmuebles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_subscriptions: {
+        Row: {
+          auto_renewal: boolean | null
+          created_at: string | null
+          estado: string
+          fecha_fin: string
+          fecha_inicio: string
+          id: string
+          package_id: string
+          pago_id: string | null
+          user_id: string
+        }
+        Insert: {
+          auto_renewal?: boolean | null
+          created_at?: string | null
+          estado?: string
+          fecha_fin: string
+          fecha_inicio?: string
+          id?: string
+          package_id: string
+          pago_id?: string | null
+          user_id: string
+        }
+        Update: {
+          auto_renewal?: boolean | null
+          created_at?: string | null
+          estado?: string
+          fecha_fin?: string
+          fecha_inicio?: string
+          id?: string
+          package_id?: string
+          pago_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_subscriptions_package_id_fkey"
+            columns: ["package_id"]
+            isOneToOne: false
+            referencedRelation: "packages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_subscriptions_pago_id_fkey"
+            columns: ["pago_id"]
+            isOneToOne: false
+            referencedRelation: "pagos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_subscriptions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "usuarios"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_wallets: {
+        Row: {
+          created_at: string | null
+          creditos_total: number
+          creditos_usados: number
+          expires_at: string | null
+          id: string
+          package_id: string
+          pago_id: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          creditos_total?: number
+          creditos_usados?: number
+          expires_at?: string | null
+          id?: string
+          package_id: string
+          pago_id?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          creditos_total?: number
+          creditos_usados?: number
+          expires_at?: string | null
+          id?: string
+          package_id?: string
+          pago_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_wallets_package_id_fkey"
+            columns: ["package_id"]
+            isOneToOne: false
+            referencedRelation: "packages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_wallets_pago_id_fkey"
+            columns: ["pago_id"]
+            isOneToOne: false
+            referencedRelation: "pagos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_wallets_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "usuarios"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       geography_columns: {

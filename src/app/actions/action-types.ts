@@ -107,6 +107,88 @@ export interface GenerateCopyResult {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// WALLETS & PUBLISHING
+// ═══════════════════════════════════════════════════════════════
+
+export interface WalletSummary {
+    walletId: string;
+    packageId: string;
+    packageName: string;
+    packageSlug: string;
+    creditsTotal: number;           // -1 for unlimited
+    creditsUsed: number;
+    creditsRemaining: number;       // calculated: total - used
+    isUnlimited: boolean;
+    expiresAt: string | null;
+    features: {
+        showPhone: boolean;
+        showWhatsApp: boolean;
+        highlighted: boolean;
+        statistics: boolean;
+        [key: string]: boolean;
+    };
+    duracionDias: number;
+    priority: number;               // For sorting (lower = higher priority)
+}
+
+export interface PackageData {
+    id: string;
+    nombre: string;
+    slug?: string;
+    features: WalletSummary['features'];
+    duracion_anuncio_dias: number;
+}
+
+export type PublishContext =
+    | {
+        type: 'HAS_CREDITS';
+        credits: number;          // -1 for unlimited
+        source: 'wallet' | 'subscription';
+        walletId?: string;
+        subscriptionId?: string;
+        packageName: string;
+        features: WalletSummary['features'];
+        duracionDias: number;
+    }
+    | { type: 'FIRST_TIMER' }
+    | { type: 'FREE_EXHAUSTED' };
+
+export interface UserWalletsResult {
+    wallets: WalletSummary[];
+    hasMultipleWallets: boolean;
+    totalCredits: number;           // Sum of all credits (-1 if any unlimited)
+    hasUnlimited: boolean;
+    firstTimer: boolean;
+    freeExhausted: boolean;
+}
+
+export interface PackageInfo {
+    id: string;
+    slug: string;
+    nombre: string;
+    tipo: string;
+    precio_cop: number;
+    creditos: number;
+    duracion_anuncio_dias: number;
+    features: WalletSummary['features'];
+    wompi_payment_link_url: string | null;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DOCUMENT VERIFICATION
+// ═══════════════════════════════════════════════════════════════
+export interface DocumentVerification {
+    id: string;
+    user_id: string;
+    inmueble_id: string;
+    tipo_documento: string;
+    documento_url: string;
+    estado: string;
+    observaciones_admin?: string;
+    created_at: string;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // UTILITY FUNCTIONS (also cannot be in 'use server' files)
 // ═══════════════════════════════════════════════════════════════
 

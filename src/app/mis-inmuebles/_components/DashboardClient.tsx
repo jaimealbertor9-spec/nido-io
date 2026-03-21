@@ -6,9 +6,10 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { User } from '@supabase/supabase-js';
 import {
-    Home, ShieldCheck, CreditCard, Users, MapPin, MoreHorizontal, Eye, FileText, CheckCircle, Clock, Pencil, Plus, Zap, RefreshCw, Loader2, AlertTriangle
+    Home, ShieldCheck, CreditCard, Users, MapPin, MoreHorizontal, Eye, FileText, CheckCircle, Clock, Pencil, Plus, Zap, RefreshCw, Loader2, AlertTriangle, Crown, Infinity
 } from 'lucide-react';
 import { renewListing } from '@/app/actions/renewListing';
+import type { UserWalletsResult, WalletSummary } from '@/app/actions/action-types';
 
 // =============================================================================
 // TYPES
@@ -18,14 +19,74 @@ interface DashboardClientProps {
     profile: { nombre?: string; avatar_url?: string } | null;
     properties: any[];
     isFirstTimer?: boolean;
-    availableCredits?: number;
+    walletsData: UserWalletsResult;
+}
+
+// =============================================================================
+// WALLET BADGE COMPONENT
+// Shows individual wallet with plan name and remaining credits
+// =============================================================================
+function WalletBadge({ wallet }: { wallet: WalletSummary }) {
+    const isUnlimited = wallet.isUnlimited;
+    const daysUntilExpiry = wallet.expiresAt
+        ? Math.ceil((new Date(wallet.expiresAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+        : null;
+
+    // Color scheme based on plan
+    const colorScheme = useMemo(() => {
+        switch (wallet.packageSlug) {
+            case 'unlimited':
+                return { bg: 'bg-gradient-to-br from-[#0c263b] to-[#1a4a6e]', text: 'text-white', badge: 'text-amber-400' };
+            case 'gold':
+            case 'oro':
+                return { bg: 'bg-gradient-to-br from-amber-100 to-yellow-50', text: 'text-amber-900', badge: 'text-amber-600' };
+            case 'silver':
+            case 'plata':
+                return { bg: 'bg-gradient-to-br from-slate-100 to-gray-50', text: 'text-slate-800', badge: 'text-slate-500' };
+            default:
+                return { bg: 'bg-gradient-to-br from-blue-50 to-indigo-50', text: 'text-blue-900', badge: 'text-blue-500' };
+        }
+    }, [wallet.packageSlug]);
+
+    return (
+        <div className={`${colorScheme.bg} rounded-xl p-3 border border-white/50 shadow-sm`}>
+            <div className="flex items-center justify-between mb-1">
+                <span className={`text-xs font-semibold ${colorScheme.text} truncate`}>
+                    {wallet.packageName}
+                </span>
+                {isUnlimited && <Crown className={`w-4 h-4 ${colorScheme.badge}`} />}
+            </div>
+            <div className="flex items-baseline gap-1">
+                {isUnlimited ? (
+                    <span className={`text-lg font-bold ${colorScheme.text} flex items-center gap-1`}>
+                        <Infinity className="w-5 h-5" /> Sin límite
+                    </span>
+                ) : (
+                    <>
+                        <span className={`text-lg font-bold ${colorScheme.text}`}>
+                            {wallet.creditsRemaining}
+                        </span>
+                        <span className={`text-xs ${colorScheme.badge}`}>
+                            {wallet.creditsRemaining === 1 ? 'crédito' : 'créditos'}
+                        </span>
+                    </>
+                )}
+            </div>
+            {daysUntilExpiry !== null && daysUntilExpiry <= 7 && !isUnlimited && (
+                <p className={`text-[10px] mt-1 ${colorScheme.badge} flex items-center gap-1`}>
+                    <Clock className="w-3 h-3" />
+                    Expira en {daysUntilExpiry} {daysUntilExpiry === 1 ? 'día' : 'días'}
+                </p>
+            )}
+        </div>
+    );
 }
 
 // =============================================================================
 // DASHBOARD CLIENT COMPONENT
 // Pure UI - receives all data via props, no auth/session logic
 // =============================================================================
-export default function DashboardClient({ user, profile, properties, isFirstTimer = false, availableCredits = 0 }: DashboardClientProps) {
+export default function DashboardClient({ user, profile, properties, isFirstTimer = false, walletsData }: DashboardClientProps) {
     // UI State only
     const router = useRouter();
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -125,15 +186,35 @@ export default function DashboardClient({ user, profile, properties, isFirstTime
 
                 {/* STATS CARDS */}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-                    {/* AVAILABLE CREDITS */}
-                    <div className="bg-white/60 p-5 rounded-2xl border border-white/50 shadow-sm backdrop-blur-md flex items-center justify-between">
-                        <div>
-                            <p className="text-sm text-gray-500 font-medium mb-1">Créditos Disponibles</p>
-                            <h3 className="text-3xl font-bold text-amber-500">{new Intl.NumberFormat('es-CO').format(availableCredits)}</h3>
+                    {/* AVAILABLE CREDITS - Multi-Wallet Breakdown */}
+                    <div className="bg-white/60 p-5 rounded-2xl border border-white/50 shadow-sm backdrop-blur-md">
+                        <div className="flex items-center justify-between mb-3">
+                            <p className="text-sm text-gray-500 font-medium">Créditos Disponibles</p>
+                            <div className="p-2 bg-amber-100 rounded-xl">
+                                <Zap className="w-5 h-5 text-amber-500" />
+                            </div>
                         </div>
-                        <div className="p-3 bg-amber-100 rounded-xl">
-                            <Zap className="w-6 h-6 text-amber-500" />
-                        </div>
+
+                        {/* Wallet Breakdown - Show each plan separately */}
+                        {walletsData.wallets.length > 0 && (
+                            <div className="space-y-2">
+                                {walletsData.wallets.map((wallet) => (
+                                    <WalletBadge key={wallet.walletId} wallet={wallet} />
+                                ))}
+                            </div>
+                        )}
+
+                        {/* No credits state */}
+                        {walletsData.wallets.length === 0 && !walletsData.hasUnlimited && (
+                            <div className="mt-2">
+                                <Link
+                                    href="/mis-inmuebles/planes"
+                                    className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1"
+                                >
+                                    <Plus className="w-4 h-4" /> Adquirir créditos
+                                </Link>
+                            </div>
+                        )}
                     </div>
                     {/* TOTAL PROPERTIES */}
                     <div className="bg-white/60 p-5 rounded-2xl border border-white/50 shadow-sm backdrop-blur-md flex items-center justify-between">

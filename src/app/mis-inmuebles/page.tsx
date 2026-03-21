@@ -1,7 +1,7 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import DashboardClient from './_components/DashboardClient';
-import { getUserPublishContext } from '@/app/actions/publishContext';
+import { getUserPublishContext, getUserWallets } from '@/app/actions/publishContext';
 
 /**
  * Server Component Page for Dashboard.
@@ -40,17 +40,11 @@ export default async function DashboardPage() {
     const publishContext = await getUserPublishContext(user.id);
     const isFirstTimer = publishContext.type === 'FIRST_TIMER';
 
-    // Fetch user's active wallets for available credits counter
-    const { data: wallets } = await supabase
-        .from('user_wallets')
-        .select('creditos_total, creditos_usados')
-        .eq('user_id', user.id)
-        .gt('expires_at', new Date().toISOString());
-
-    let availableCredits = 0;
-    if (wallets && wallets.length > 0) {
-        availableCredits = wallets.reduce((sum, w) => sum + Math.max(0, w.creditos_total - w.creditos_usados), 0);
-    }
+    // ─────────────────────────────────────────────────────────────────────
+    // MULTI-WALLET: Fetch all wallets with detailed breakdown
+    // Replaces the old single-number availableCredits
+    // ─────────────────────────────────────────────────────────────────────
+    const walletsData = await getUserWallets(user.id);
 
     // Pass all data to Client Component
     return (
@@ -59,7 +53,7 @@ export default async function DashboardPage() {
             profile={profile}
             properties={properties || []}
             isFirstTimer={isFirstTimer}
-            availableCredits={availableCredits}
+            walletsData={walletsData}
         />
     );
 }

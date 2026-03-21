@@ -63,8 +63,8 @@ export default function PropertyDetailsPage() {
     const propertyId = params.id as string;
 
     useEffect(() => {
+        let isMounted = true;
         const controller = new AbortController();
-        let cancelled = false; // local flag — immune to re-mount race
 
         console.log('[Details] Mounted details page, propertyId:', propertyId, 'authLoading:', authLoading, 'user:', !!user);
 
@@ -75,31 +75,24 @@ export default function PropertyDetailsPage() {
         }
 
         // CASE 2: Auth still resolving — wait, don't bail
-        // The server layout already validated the session; we just need
-        // AuthProvider to hydrate the client-side user object.
         if (authLoading) {
             return; // Keep spinner alive, useEffect will re-run when authLoading changes
         }
 
-
-
         async function fetchProperty() {
-            console.log('[Details] Fetching data for ID:', propertyId);
             setLoading(true);
             setNotFound(false);
             setProperty(null);
 
             try {
-                // Server layout already validated auth; browser client auto-attaches
-                // session cookie — no need for redundant getUser() call here.
-
                 const { data, error } = await supabase
                     .from('inmuebles')
                     .select('*, inmueble_imagenes(*)')
                     .eq('id', propertyId)
+                    .abortSignal(controller.signal)
                     .single();
 
-                if (cancelled) return;
+                if (!isMounted) return;
 
                 if (error || !data) {
                     console.warn('[Details] No data or error:', error?.message);
@@ -109,7 +102,6 @@ export default function PropertyDetailsPage() {
 
                 console.log('[Details] Data received for:', data.titulo ?? propertyId);
 
-                // Safe-cast: coalesce nullable arrays and new columns
                 const safeProperty: Property = {
                     ...data,
                     titulo: data.titulo ?? 'Sin título',
@@ -124,11 +116,12 @@ export default function PropertyDetailsPage() {
 
                 // [NEW] Check premium status
                 const premiumResult = await getPropertyPremiumStatus(propertyId);
+                
+                if (!isMounted) return;
+                
                 setIsPremium(premiumResult.isPremium);
-
                 setProperty(safeProperty);
 
-                // Set first image as selected
                 if (safeProperty.inmueble_imagenes.length > 0) {
                     const fachada = safeProperty.inmueble_imagenes.find(
                         (img: PropertyImage) => img.category === 'fachada'
@@ -136,14 +129,16 @@ export default function PropertyDetailsPage() {
                     setSelectedImage(fachada?.url || safeProperty.inmueble_imagenes[0].url);
                 }
             } catch (err: any) {
-                if (cancelled || err?.name === 'AbortError') {
+                if (!isMounted || err?.name === 'AbortError') {
                     console.log('[Details] Fetch aborted (safe to ignore)');
                     return;
                 }
                 console.error('[Details] Error fetching property:', err);
-                setNotFound(true);
+                if (isMounted) {
+                    setNotFound(true);
+                }
             } finally {
-                if (!cancelled) {
+                if (isMounted) {
                     console.log('[Details] Fetch cycle complete, stopping spinner');
                     setLoading(false);
                 }
@@ -154,7 +149,7 @@ export default function PropertyDetailsPage() {
 
         return () => {
             console.log('[Details] Cleanup — aborting pending fetches');
-            cancelled = true;
+            isMounted = false;
             controller.abort();
         };
     }, [propertyId, authLoading]);

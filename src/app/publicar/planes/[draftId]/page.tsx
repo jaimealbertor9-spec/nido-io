@@ -10,7 +10,8 @@ import {
     CheckCircle, XCircle, Shield, Loader2,
     CreditCard, Sparkles, ArrowRight, Gift
 } from 'lucide-react';
-import { getUserPublishContext, getPackages, type PublishContext, type PackageInfo } from '@/app/actions/publishContext';
+import { getUserPublishContext, getPackages } from '@/app/actions/publishContext';
+import { PublishContext, PackageInfo, WalletSummary } from '@/app/actions/action-types';
 import { publishWithCredits } from '@/app/actions/publishWithCredits';
 import { initiatePaymentSession } from '@/app/actions/payment';
 import { supabase } from '@/lib/supabase';

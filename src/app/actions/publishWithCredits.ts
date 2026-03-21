@@ -1,6 +1,7 @@
 'use server';
 
-import { getServiceRoleClient } from '@/lib/supabase-admin';
+import { getServiceRoleClient } from '../../lib/supabase-admin';
+import { PackageData } from './action-types';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // publishWithCredits — Consumes 1 credit (wallet or free tier) to publish
@@ -31,7 +32,7 @@ export async function publishWithCredits(
             .select('documento_url')
             .eq('user_id', userId);
 
-        const hasDocument = verifications?.some((v: any) => v.documento_url);
+        const hasDocument = verifications?.some((v) => (v as { documento_url: string }).documento_url);
         if (!hasDocument) {
             return { success: false, error: 'KYC_REQUIRED' };
         }
@@ -83,7 +84,7 @@ export async function publishWithCredits(
                 return { success: false, error: 'Suscripción no válida o expirada' };
             }
 
-            const pkg = sub.packages as any;
+            const pkg = sub.packages as unknown as PackageData;
             features = pkg?.features || {};
             duracionDias = pkg?.duracion_anuncio_dias || 90;
 
@@ -106,7 +107,7 @@ export async function publishWithCredits(
                 return { success: false, error: 'No tienes créditos disponibles' };
             }
 
-            const pkg = wallet.packages as any;
+            const pkg = wallet.packages as unknown as PackageData;
             features = pkg?.features || {};
             duracionDias = pkg?.duracion_anuncio_dias || 30;
 
@@ -180,8 +181,8 @@ export async function publishWithCredits(
             .insert({
                 user_id: userId,
                 inmueble_id: draftId,
-                wallet_id: effectiveWalletId || null,
-                subscription_id: effectiveSubscriptionId || null,
+                wallet_id: isConsumingWalletCredit ? effectiveWalletId : null,
+                subscription_id: (!isConsumingWalletCredit && effectiveSubscriptionId) ? effectiveSubscriptionId : null,
                 features_snapshot: features,
                 fecha_publicacion: now.toISOString(),
                 fecha_expiracion: expiration.toISOString(),
@@ -204,8 +205,8 @@ export async function publishWithCredits(
             .from('inmuebles')
             .update({
                 estado: 'en_revision',
-                fecha_publicacion: now.toISOString(),
-                fecha_expiracion: expiration.toISOString(),
+                fecha_publicacion: null,
+                fecha_expiracion: null,
             })
             .eq('id', draftId);
 
