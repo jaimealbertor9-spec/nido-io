@@ -20,6 +20,7 @@ interface DashboardClientProps {
     properties: any[];
     isFirstTimer?: boolean;
     walletsData: UserWalletsResult;
+    pendingRevisionsIds?: string[];
 }
 
 // =============================================================================
@@ -79,7 +80,7 @@ function WalletBadge({ wallet }: { wallet: WalletSummary }) {
 // DASHBOARD CLIENT COMPONENT
 // Pure UI - receives all data via props, no auth/session logic
 // =============================================================================
-export default function DashboardClient({ user, profile, properties, isFirstTimer = false, walletsData }: DashboardClientProps) {
+export default function DashboardClient({ user, profile, properties, isFirstTimer = false, walletsData, pendingRevisionsIds = [] }: DashboardClientProps) {
     // UI State only
     const router = useRouter();
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -117,6 +118,10 @@ export default function DashboardClient({ user, profile, properties, isFirstTime
 
     // Helpers
     const getStatusBadge = (estado: string | null, p?: any) => {
+        if (p && pendingRevisionsIds.includes(p.id)) {
+            return { label: 'REQUIERE CORRECCIONES', classes: 'bg-amber-500/90 border-amber-400/50' };
+        }
+
         // Use effective estado to catch zombie properties
         const status = p ? getEffectiveEstado(p) : (estado?.toLowerCase() || 'borrador');
         switch (status) {
@@ -289,11 +294,20 @@ export default function DashboardClient({ user, profile, properties, isFirstTime
                                     <h3 className="font-bold text-lg text-slate-800 truncate mb-1">{p.titulo || 'Sin título'}</h3>
                                     <p className="font-bold text-[#1A56DB] text-lg mb-2">${getPrice(p)}</p>
 
-                                    {isEnRevision && (
+                                    {isEnRevision && !pendingRevisionsIds.includes(p.id) && (
                                         <div className="bg-amber-50 border border-amber-100 rounded-lg p-3 mb-3 flex items-start gap-2 animate-in fade-in duration-300">
                                             <Clock className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
                                             <p className="text-xs text-amber-800 leading-snug">
                                                 Tu anuncio está siendo revisado por nuestro equipo de calidad. Estará activo en menos de 24H.
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    {pendingRevisionsIds.includes(p.id) && (
+                                        <div className="bg-amber-100 border border-amber-200 rounded-lg p-3 mb-3 flex items-start gap-2 animate-in fade-in duration-300">
+                                            <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                                            <p className="text-xs text-amber-900 leading-snug font-medium">
+                                                ⚠️ Tu anuncio requiere ajustes. Por favor revisa los detalles para poder publicarlo.
                                             </p>
                                         </div>
                                     )}

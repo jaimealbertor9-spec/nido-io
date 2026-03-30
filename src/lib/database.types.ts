@@ -1,4 +1,4 @@
-﻿export type Json =
+export type Json =
   | string
   | number
   | boolean
@@ -14,6 +14,44 @@ export type Database = {
   }
   public: {
     Tables: {
+      revisiones_inmueble: {
+        Row: {
+          id: string
+          inmueble_id: string
+          admin_id: string | null
+          comentarios: string
+          imagenes_adjuntas: string[] | null
+          estado_revision: string | null
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          inmueble_id: string
+          admin_id?: string | null
+          comentarios: string
+          imagenes_adjuntas?: string[] | null
+          estado_revision?: string | null
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          inmueble_id?: string
+          admin_id?: string | null
+          comentarios?: string
+          imagenes_adjuntas?: string[] | null
+          estado_revision?: string | null
+          created_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "revisiones_inmueble_inmueble_id_fkey"
+            columns: ["inmueble_id"]
+            isOneToOne: false
+            referencedRelation: "inmuebles"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
       inmueble_imagenes: {
         Row: {
           category: string

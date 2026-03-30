@@ -46,6 +46,26 @@ export default async function DashboardPage() {
     // ─────────────────────────────────────────────────────────────────────
     const walletsData = await getUserWallets(user.id);
 
+    // ─────────────────────────────────────────────────────────────────────
+    // REVISION FEEDBACK: Fetch IDs of properties pending corrections
+    // ─────────────────────────────────────────────────────────────────────
+    const { getServiceRoleClient } = await import('@/lib/supabase-admin');
+    const supabaseAdmin = getServiceRoleClient();
+    
+    // We get all pending revisions for the properties just fetched
+    const propertyIds = properties?.map(p => p.id) || [];
+    let pendingRevisionsIds: string[] = [];
+    
+    if (propertyIds.length > 0) {
+        const { data: revs } = await supabaseAdmin
+            .from('revisiones_inmueble')
+            .select('inmueble_id')
+            .in('inmueble_id', propertyIds)
+            .eq('estado_revision', 'pendiente_de_correccion');
+            
+        pendingRevisionsIds = revs?.map(r => r.inmueble_id) || [];
+    }
+
     // Pass all data to Client Component
     return (
         <DashboardClient
@@ -54,6 +74,7 @@ export default async function DashboardPage() {
             properties={properties || []}
             isFirstTimer={isFirstTimer}
             walletsData={walletsData}
+            pendingRevisionsIds={pendingRevisionsIds}
         />
     );
 }

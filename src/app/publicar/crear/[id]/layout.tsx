@@ -5,6 +5,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { Inter } from 'next/font/google';
 import { FileText, ImageIcon, Check } from 'lucide-react';
+import RevisionFeedbackPanel from '@/components/publicar/RevisionFeedbackPanel';
 
 const inter = Inter({
     subsets: ['latin'],
@@ -129,6 +130,7 @@ export default function WizardLayout({ children }: { children: React.ReactNode }
                 {/* MAIN CONTENT */}
                 {/* ═══════════════════════════════════════════════════════════════ */}
                 <main className="flex-1 min-h-screen">
+                    <RevisionFeedbackPanel inmuebleId={propertyId} />
                     {/* Mobile Header */}
                     <header className="lg:hidden sticky top-0 z-50 bg-white border-b border-slate-200 px-4 py-3">
                         <div className="flex items-center justify-between mb-3">

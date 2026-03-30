@@ -8,11 +8,13 @@ import {
     ArrowLeft, MapPin, Bed, Bath, Maximize, Edit, Home, Phone,
     LayoutDashboard, Building, BarChart2, MessageSquare, Bell, Plus, LogOut,
     CheckCircle, Clock, Eye, Zap, Sparkles, Layers, Video, DollarSign,
-    Lock, Send, Loader2 as Loader2Icon, Crown
+    Lock, Send, Loader2 as Loader2Icon, Crown, AlertTriangle
 } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { getPropertyPremiumStatus } from '@/app/actions/getMyLeads';
+import { getPendingRevision } from '@/app/actions/revisionActions';
+import RevisionFeedbackPanel from '@/components/publicar/RevisionFeedbackPanel';
 
 interface PropertyImage {
     id: string;
@@ -59,6 +61,7 @@ export default function PropertyDetailsPage() {
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
     const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
     const [isPremium, setIsPremium] = useState(false);
+    const [hasPendingRevision, setHasPendingRevision] = useState(false);
 
     const propertyId = params.id as string;
 
@@ -117,9 +120,13 @@ export default function PropertyDetailsPage() {
                 // [NEW] Check premium status
                 const premiumResult = await getPropertyPremiumStatus(propertyId);
                 
+                // [NEW] Check pending revision
+                const revision = await getPendingRevision(propertyId);
+                
                 if (!isMounted) return;
                 
                 setIsPremium(premiumResult.isPremium);
+                setHasPendingRevision(!!revision);
                 setProperty(safeProperty);
 
                 if (safeProperty.inmueble_imagenes.length > 0) {
@@ -161,6 +168,11 @@ export default function PropertyDetailsPage() {
 
     const getStatusBadge = (estado: string | null) => {
         const status = estado?.toLowerCase() || 'borrador';
+        
+        if (hasPendingRevision) {
+            return { label: 'REQUIERE CORRECCIONES', classes: 'bg-amber-500/90 border-amber-400/50', icon: AlertTriangle };
+        }
+        
         // Check if this property's fecha_expiracion has passed
         const isExpired = property?.estado === 'publicado'
             && (property as any)?.fecha_expiracion
@@ -235,6 +247,12 @@ export default function PropertyDetailsPage() {
                     <BadgeIcon className="w-4 h-4" />
                     {badge.label}
                 </div>
+
+                {hasPendingRevision && (
+                    <div className="mb-4">
+                        <RevisionFeedbackPanel inmuebleId={propertyId} />
+                    </div>
+                )}
 
                 {/* GALLERY SECTION */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
