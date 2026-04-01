@@ -10,6 +10,7 @@ import {
     Search, Plus, Bell, LogOut, Zap, ArrowLeft
 } from 'lucide-react';
 import { signOutAction } from '@/app/mis-inmuebles/actions';
+import NotificationBell from './NotificationBell';
 
 export default function DashboardLayoutClient({ children }: { children: React.ReactNode }) {
     const { user, profile } = useAuth();
@@ -93,10 +94,7 @@ export default function DashboardLayoutClient({ children }: { children: React.Re
                             <Plus className="w-4 h-4 mr-2" /> Crear Propiedad
                         </Link>
                         <div className="flex items-center space-x-4 border-l border-gray-200 pl-6">
-                            <button className="relative p-2 text-gray-400 hover:text-gray-500 transition-colors">
-                                <Bell className="w-5 h-5" />
-                                <span className="absolute top-2 right-2 block h-2 w-2 rounded-full bg-red-500 ring-2 ring-white"></span>
-                            </button>
+                            <NotificationBell />
                             <div className="relative">
                                 <button onClick={() => setIsUserMenuOpen(!isUserMenuOpen)} className="flex items-center focus:outline-none">
                                     {avatarUrl ? (

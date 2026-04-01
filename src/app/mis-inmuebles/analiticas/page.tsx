@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import { checkUserHasPaidProperties } from '@/app/actions/checkPremium';
+import { getOwnerAnalytics, AnalyticsData } from '@/app/actions/analyticsActions';
+import { AnalyticsCharts } from '@/components/dashboard/AnalyticsCharts';
 import {
     BarChart2, Lock, Crown, TrendingUp, Eye, Users, Heart,
     Loader2
@@ -12,23 +14,29 @@ import Link from 'next/link';
 export default function AnaliticasPage() {
     const { user, loading: authLoading } = useAuth();
     const [hasPaid, setHasPaid] = useState(false);
+    const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
         if (authLoading || !user) return;
 
-        async function check() {
+        async function loadData() {
             try {
-                const result = await checkUserHasPaidProperties(user!.id);
-                setHasPaid(result);
+                // Determine if user has premium (to unblur UI)
+                const isPaid = await checkUserHasPaidProperties(user!.id);
+                setHasPaid(isPaid);
+
+                // Fetch real analytic values regardless (so blurred UI also shows shapes of real metrics)
+                const analyticData = await getOwnerAnalytics();
+                setAnalytics(analyticData);
             } catch (err) {
-                console.error('[Analiticas] Error checking premium:', err);
+                console.error('[Analiticas] Error loading data:', err);
             } finally {
                 setIsLoading(false);
             }
         }
 
-        check();
+        loadData();
     }, [user, authLoading]);
 
     if (isLoading || authLoading) {
@@ -39,8 +47,19 @@ export default function AnaliticasPage() {
         );
     }
 
+    // Default payload if empty to prevent NaN/crashes
+    const fallbackData = {
+        totalViews: 0,
+        totalLeads: 0,
+        totalInteractions: 0,
+        totalSaves: 0,
+        chartData: []
+    };
+
+    const kpi = analytics || fallbackData;
+
     // ═══════════════════════════════════════════════════════════════
-    // PAYWALL: No paid properties → show upgrade prompt
+    // PAYWALL: No paid properties → show upgrade prompt (Blurred)
     // ═══════════════════════════════════════════════════════════════
     if (!hasPaid) {
         return (
@@ -62,7 +81,7 @@ export default function AnaliticasPage() {
                     {/* Blurred Preview Cards */}
                     <div className="relative">
                         <div className="blur-sm pointer-events-none select-none">
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                                 <div className="bg-white rounded-2xl border border-gray-200 p-5">
                                     <div className="flex items-center gap-3 mb-3">
                                         <div className="p-2 bg-blue-100 rounded-xl">
@@ -70,10 +89,7 @@ export default function AnaliticasPage() {
                                         </div>
                                         <span className="text-sm text-gray-500">Visualizaciones</span>
                                     </div>
-                                    <p className="text-3xl font-bold text-gray-900">1,247</p>
-                                    <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
-                                        <TrendingUp className="w-3 h-3" /> +12% este mes
-                                    </p>
+                                    <p className="text-3xl font-bold text-gray-900">{kpi.totalViews}</p>
                                 </div>
                                 <div className="bg-white rounded-2xl border border-gray-200 p-5">
                                     <div className="flex items-center gap-3 mb-3">
@@ -82,10 +98,16 @@ export default function AnaliticasPage() {
                                         </div>
                                         <span className="text-sm text-gray-500">Contactos</span>
                                     </div>
-                                    <p className="text-3xl font-bold text-gray-900">34</p>
-                                    <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
-                                        <TrendingUp className="w-3 h-3" /> +8% este mes
-                                    </p>
+                                    <p className="text-3xl font-bold text-gray-900">{kpi.totalLeads}</p>
+                                </div>
+                                <div className="bg-white rounded-2xl border border-gray-200 p-5">
+                                    <div className="flex items-center gap-3 mb-3">
+                                        <div className="p-2 bg-emerald-100 rounded-xl">
+                                            <TrendingUp className="w-5 h-5 text-emerald-600" />
+                                        </div>
+                                        <span className="text-sm text-gray-500">Clics Totales</span>
+                                    </div>
+                                    <p className="text-3xl font-bold text-gray-900">{kpi.totalInteractions}</p>
                                 </div>
                                 <div className="bg-white rounded-2xl border border-gray-200 p-5">
                                     <div className="flex items-center gap-3 mb-3">
@@ -94,20 +116,17 @@ export default function AnaliticasPage() {
                                         </div>
                                         <span className="text-sm text-gray-500">Guardados</span>
                                     </div>
-                                    <p className="text-3xl font-bold text-gray-900">89</p>
-                                    <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
-                                        <TrendingUp className="w-3 h-3" /> +5% este mes
-                                    </p>
+                                    <p className="text-3xl font-bold text-gray-900">{kpi.totalSaves}</p>
                                 </div>
                             </div>
 
-                            {/* Fake chart area */}
-                            <div className="bg-white rounded-2xl border border-gray-200 p-6 h-64">
+                            {/* Fake chart area to keep the skeleton */}
+                            <div className="bg-white rounded-2xl border border-gray-200 p-6 h-72">
                                 <div className="flex items-center gap-2 mb-4">
                                     <BarChart2 className="w-5 h-5 text-gray-400" />
-                                    <span className="font-semibold text-gray-700">Tendencia de Visualizaciones</span>
+                                    <span className="font-semibold text-gray-700">Rendimiento por Propiedad (Top 7)</span>
                                 </div>
-                                <div className="flex items-end gap-3 h-40 px-4">
+                                <div className="flex items-end gap-3 h-48 px-4">
                                     {[40, 65, 45, 80, 55, 90, 70, 95, 60, 85, 75, 100].map((h, i) => (
                                         <div
                                             key={i}
@@ -120,7 +139,7 @@ export default function AnaliticasPage() {
                         </div>
 
                         {/* Overlay CTA */}
-                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/60 backdrop-blur-[3px] rounded-2xl">
+                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/60 backdrop-blur-[3px] rounded-2xl z-10">
                             <div className="bg-white rounded-2xl border border-gray-200 shadow-xl p-8 text-center max-w-md">
                                 <div className="p-4 bg-amber-100 rounded-full inline-flex mb-4">
                                     <Lock className="w-7 h-7 text-amber-600" />
@@ -147,7 +166,7 @@ export default function AnaliticasPage() {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // PREMIUM USER: Show real analytics (placeholder for now)
+    // PREMIUM USER: Show real analytics
     // ═══════════════════════════════════════════════════════════════
     return (
         <div className="flex-1 overflow-y-auto p-8">
@@ -164,48 +183,50 @@ export default function AnaliticasPage() {
                     </p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                    <div className="bg-white rounded-2xl border border-gray-200 p-5">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+                    <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm transition-shadow hover:shadow-md">
                         <div className="flex items-center gap-3 mb-3">
                             <div className="p-2 bg-blue-100 rounded-xl">
                                 <Eye className="w-5 h-5 text-blue-600" />
                             </div>
-                            <span className="text-sm text-gray-500">Visualizaciones</span>
+                            <span className="text-sm text-gray-500">Vistas Totales</span>
                         </div>
-                        <p className="text-3xl font-bold text-gray-900">0</p>
-                        <p className="text-xs text-gray-400 mt-1">Aún sin datos</p>
+                        <p className="text-3xl font-bold text-gray-900">{kpi.totalViews}</p>
                     </div>
-                    <div className="bg-white rounded-2xl border border-gray-200 p-5">
+
+                    <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm transition-shadow hover:shadow-md">
                         <div className="flex items-center gap-3 mb-3">
                             <div className="p-2 bg-purple-100 rounded-xl">
                                 <Users className="w-5 h-5 text-purple-600" />
                             </div>
                             <span className="text-sm text-gray-500">Contactos</span>
                         </div>
-                        <p className="text-3xl font-bold text-gray-900">0</p>
-                        <p className="text-xs text-gray-400 mt-1">Aún sin datos</p>
+                        <p className="text-3xl font-bold text-gray-900">{kpi.totalLeads}</p>
                     </div>
-                    <div className="bg-white rounded-2xl border border-gray-200 p-5">
+
+                    <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm transition-shadow hover:shadow-md">
+                        <div className="flex items-center gap-3 mb-3">
+                            <div className="p-2 bg-emerald-100 rounded-xl">
+                                <TrendingUp className="w-5 h-5 text-emerald-600" />
+                            </div>
+                            <span className="text-sm text-gray-500">Clics / Enganche</span>
+                        </div>
+                        <p className="text-3xl font-bold text-gray-900">{kpi.totalInteractions}</p>
+                    </div>
+
+                    <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm transition-shadow hover:shadow-md">
                         <div className="flex items-center gap-3 mb-3">
                             <div className="p-2 bg-rose-100 rounded-xl">
                                 <Heart className="w-5 h-5 text-rose-600" />
                             </div>
                             <span className="text-sm text-gray-500">Guardados</span>
                         </div>
-                        <p className="text-3xl font-bold text-gray-900">0</p>
-                        <p className="text-xs text-gray-400 mt-1">Aún sin datos</p>
+                        <p className="text-3xl font-bold text-gray-900">{kpi.totalSaves}</p>
                     </div>
                 </div>
 
-                <div className="bg-white rounded-2xl border border-gray-200 p-6">
-                    <div className="flex items-center gap-2 mb-4">
-                        <BarChart2 className="w-5 h-5 text-gray-400" />
-                        <span className="font-semibold text-gray-700">Tendencia de Visualizaciones</span>
-                    </div>
-                    <div className="h-48 flex items-center justify-center text-gray-400 text-sm">
-                        Las estadísticas se mostrarán a medida que tu inmueble reciba actividad.
-                    </div>
-                </div>
+                {/* Inject Real Analytics Charts */}
+                <AnalyticsCharts data={kpi.chartData} />
             </div>
         </div>
     );

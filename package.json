@@ -14,10 +14,12 @@
     "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.88.0",
     "@types/uuid": "^10.0.0",
+    "es-toolkit": "^1.45.1",
     "lucide-react": "^0.561.0",
     "next": "^14.2.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
+    "recharts": "^3.8.1",
     "resend": "^6.8.0",
     "uuid": "^13.0.0"
   },
