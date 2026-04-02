@@ -7,103 +7,81 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
+  Cell,
 } from 'recharts';
 
-interface AnalyticsChartProps {
-  data: {
-    name: string;
-    ShortName: string;
-    Visualizaciones: number;
-    Interacciones: number;
-    Guardados: number;
-  }[];
+interface SinglePropertyChartProps {
+  views: number;
+  leads: number;
+  interactions: number;
+  saves: number;
+  titulo: string;
 }
 
-export function AnalyticsCharts({ data }: AnalyticsChartProps) {
-  if (!data || data.length === 0) {
+export function AnalyticsCharts({ views, leads, interactions, saves, titulo }: SinglePropertyChartProps) {
+  const data = [
+    { name: 'Visualizaciones', value: views, color: '#1A56DB' },
+    { name: 'Contactos', value: leads, color: '#9333ea' },
+    { name: 'Interacciones', value: interactions, color: '#059669' },
+    { name: 'Guardados', value: saves, color: '#e11d48' },
+  ];
+
+  const hasData = data.some(d => d.value > 0);
+
+  if (!hasData) {
     return (
       <div className="bg-white rounded-2xl border border-gray-200 p-6 h-64 flex flex-col items-center justify-center text-gray-500">
-        <p className="font-medium text-gray-700">Sin datos para mostrar</p>
-        <p className="text-sm mt-1">Comparativa disponible cuando tus inmuebles reciban tráfico.</p>
+        <p className="font-medium text-gray-700">Sin datos aún</p>
+        <p className="text-sm mt-1">Las estadísticas aparecerán cuando tu inmueble reciba tráfico.</p>
       </div>
     );
   }
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h3 className="text-lg font-bold text-gray-900">
-            Rendimiento por Propiedad (Top 7)
-          </h3>
-          <p className="text-sm text-gray-500 mt-1">
-            Compara visualizaciones, contactos (WhatsApp/Llamadas/Mensajes) y usuarios que agregaron a favoritos.
-          </p>
-        </div>
+      <div className="mb-6">
+        <h3 className="text-lg font-bold text-gray-900">
+          Desglose de Métricas
+        </h3>
+        <p className="text-sm text-gray-500 mt-1">
+          Rendimiento detallado de <span className="font-semibold text-gray-700">{titulo}</span>
+        </p>
       </div>
-      
-      <div className="h-[350px] w-full">
+
+      <div className="h-[300px] w-full">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={data}
-            margin={{
-              top: 10,
-              right: 10,
-              left: 0,
-              bottom: 20,
-            }}
+            margin={{ top: 10, right: 10, left: 0, bottom: 10 }}
           >
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-            <XAxis 
-              dataKey="ShortName" 
-              tick={{ fill: '#6b7280', fontSize: 13 }} 
+            <XAxis
+              dataKey="name"
+              tick={{ fill: '#6b7280', fontSize: 13 }}
               tickLine={false}
               axisLine={{ stroke: '#e5e7eb' }}
-              dy={15}
             />
-            <YAxis 
-              tick={{ fill: '#6b7280', fontSize: 13 }} 
+            <YAxis
+              tick={{ fill: '#6b7280', fontSize: 13 }}
               tickLine={false}
               axisLine={false}
-              dx={-10}
               allowDecimals={false}
             />
-            <Tooltip 
+            <Tooltip
               cursor={{ fill: '#f8fafc' }}
-              contentStyle={{ 
-                borderRadius: '12px', 
-                border: '1px solid #e5e7eb', 
-                boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' 
+              contentStyle={{
+                borderRadius: '12px',
+                border: '1px solid #e5e7eb',
+                boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
               }}
               labelStyle={{ fontWeight: 'bold', color: '#111827', marginBottom: '8px' }}
             />
-            <Legend 
-              wrapperStyle={{ paddingTop: '20px' }}
-              iconType="circle"
-            />
-            <Bar 
-              dataKey="Visualizaciones" 
-              name="Visualizaciones" 
-              fill="#1A56DB" 
-              radius={[6, 6, 0, 0]} 
-              barSize={32} 
-            />
-            <Bar 
-              dataKey="Interacciones" 
-              name="Total Interacciones" 
-              fill="#9333ea" 
-              radius={[6, 6, 0, 0]} 
-              barSize={32} 
-            />
-            <Bar 
-              dataKey="Guardados" 
-              name="Guardados" 
-              fill="#e11d48" 
-              radius={[6, 6, 0, 0]} 
-              barSize={32} 
-            />
+            <Bar dataKey="value" name="Métrica" radius={[8, 8, 0, 0]} barSize={56}>
+              {data.map((entry, index) => (
+                <Cell key={`cell-${index}`} fill={entry.color} />
+              ))}
+            </Bar>
           </BarChart>
         </ResponsiveContainer>
       </div>
