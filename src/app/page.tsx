@@ -24,7 +24,7 @@ export default function SplashPage() {
                 width={280}
                 height={280}
                 priority
-                className="object-contain"
+                className="object-contain w-48 h-48 md:w-[280px] md:h-[280px]"
             />
 
             {/* Slogan */}
