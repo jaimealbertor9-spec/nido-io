@@ -101,9 +101,12 @@ export default function DashboardClient({ user, profile, properties, isFirstTime
 
     const stats = useMemo(() => {
         const total = properties.length;
-        const publicados = properties.filter(p => getEffectiveEstado(p) === 'publicado').length;
+        const activos = properties.filter(p => {
+            const estado = getEffectiveEstado(p);
+            return estado === 'publicado' || estado === 'en_revision';
+        }).length;
         const vistas = properties.reduce((acc, p) => acc + (p.vistas || p.visualizaciones || 0), 0);
-        return { total, publicados, vistas };
+        return { total, activos, vistas };
     }, [properties]);
 
     // Filter properties
@@ -226,8 +229,8 @@ export default function DashboardClient({ user, profile, properties, isFirstTime
                     </div>
                     <div className="bg-white/60 p-5 rounded-2xl border border-white/50 shadow-sm backdrop-blur-md flex items-center justify-between">
                         <div>
-                            <p className="text-sm text-gray-500 font-medium mb-1">Anuncios Publicados</p>
-                            <h3 className="text-3xl font-bold text-emerald-600">{stats.publicados}</h3>
+                            <p className="text-sm text-gray-500 font-medium mb-1">Anuncios Activos</p>
+                            <h3 className="text-3xl font-bold text-emerald-600">{stats.activos}</h3>
                         </div>
                         <div className="p-3 bg-emerald-100 rounded-xl">
                             <CheckCircle className="w-6 h-6 text-emerald-600" />

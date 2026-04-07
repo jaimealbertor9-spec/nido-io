@@ -174,10 +174,10 @@ export default function Paso2Page() {
                     setTelefono(propData.telefono_llamadas ?? '');
                     setWhatsapp(propData.whatsapp ?? '');
                     setInmuebleEstado(propData.estado ?? 'borrador');
-                    setHabitaciones((propData as any).habitaciones ?? 0);
-                    setBanos((propData as any).banos ?? 0);
+                    setHabitaciones(propData.habitaciones ?? 0);
+                    setBanos(propData.banos ?? 0);
                     // Fix 3: Hydrate owner status from DB (default true for new drafts)
-                    setIsOwner((propData as any).es_propietario ?? true);
+                    setIsOwner(propData.es_propietario ?? true);
                     setStep1Data({
                         tipo_inmueble: propData.tipo_inmueble ?? null,
                         area_m2: propData.area_m2 ?? null,
@@ -185,17 +185,17 @@ export default function Paso2Page() {
                         direccion: propData.direccion ?? null
                     });
                     // Load admin fee (null-safe)
-                    const rawAdminFee = (propData as any).administracion;
+                    const rawAdminFee = propData.administracion;
                     if (rawAdminFee != null && rawAdminFee > 0) {
                         const af = rawAdminFee.toString();
                         setAdminFee(af);
                         setAdminFeeDisplay(formatCurrency(af));
                     }
                     // Load video fields (null-safe)
-                    setVideoUrl((propData as any).video_url ?? '');
-                    setVideoFile((propData as any).video_file ?? '');
-                    if ((propData as any).video_file) {
-                        const parts = ((propData as any).video_file as string).split('/');
+                    setVideoUrl(propData.video_url ?? '');
+                    setVideoFile(propData.video_file ?? '');
+                    if (propData.video_file) {
+                        const parts = (propData.video_file as string).split('/');
                         setVideoFileName(parts[parts.length - 1] || 'video');
                     }
                 }

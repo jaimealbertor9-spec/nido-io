@@ -117,6 +117,10 @@ export type Database = {
           titulo: string
           updated_at: string | null
           whatsapp: string | null
+          administracion: number | null
+          video_url: string | null
+          video_file: string | null
+          es_propietario: boolean | null
         }
         Insert: {
           amenities?: string[] | null
@@ -147,6 +151,10 @@ export type Database = {
           titulo: string
           updated_at?: string | null
           whatsapp?: string | null
+          administracion?: number | null
+          video_url?: string | null
+          video_file?: string | null
+          es_propietario?: boolean | null
         }
         Update: {
           amenities?: string[] | null
@@ -177,6 +185,10 @@ export type Database = {
           titulo?: string
           updated_at?: string | null
           whatsapp?: string | null
+          administracion?: number | null
+          video_url?: string | null
+          video_file?: string | null
+          es_propietario?: boolean | null
         }
         Relationships: [
           {
