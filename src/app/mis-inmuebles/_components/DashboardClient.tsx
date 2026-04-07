@@ -152,7 +152,7 @@ export default function DashboardClient({ user, profile, properties, isFirstTime
     };
 
     return (
-        <div className="flex-1 overflow-y-auto p-8 relative z-0 flex flex-col items-center">
+        <div className="flex-1 overflow-y-auto p-4 md:p-8 relative z-0 flex flex-col items-center">
             <div className="text-left mb-8 w-full max-w-6xl">
                 <h2 className="text-xl font-bold text-[#111827] mb-2">Bienvenido a tu Panel de Gestión</h2>
                 <p className="text-gray-500 text-sm mb-8">Hola {displayName}, aquí tienes el resumen de tu cuenta.</p>

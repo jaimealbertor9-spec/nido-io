@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import Header from '@/components/Header';
 import { AuthProvider } from '@/components/AuthProvider';
@@ -6,6 +6,12 @@ import { AuthProvider } from '@/components/AuthProvider';
 export const metadata: Metadata = {
     title: 'Nido io - Encuentra tu hogar en Líbano, Tolima',
     description: 'Plataforma inmobiliaria con búsqueda por lenguaje natural. Arrienda, compra o alquila por días en Líbano, Tolima.',
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
 };
 
 export default function RootLayout({

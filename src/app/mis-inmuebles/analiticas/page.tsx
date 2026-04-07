@@ -57,7 +57,7 @@ export default function AnaliticasPage() {
     }
 
     return (
-        <div className="flex-1 overflow-y-auto p-8">
+        <div className="flex-1 overflow-y-auto p-4 md:p-8">
             <div className="max-w-4xl mx-auto">
                 {/* ── HEADER ─────────────────────────────────────── */}
                 <div className="mb-8">
@@ -156,7 +156,7 @@ export default function AnaliticasPage() {
 
                         {/* Overlay CTA */}
                         <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/60 backdrop-blur-[3px] rounded-2xl z-10">
-                            <div className="bg-white rounded-2xl border border-gray-200 shadow-xl p-8 text-center max-w-md">
+                            <div className="bg-white rounded-2xl border border-gray-200 shadow-xl p-4 md:p-8 text-center max-w-md">
                                 <div className="p-4 bg-red-100 rounded-full inline-flex mb-4">
                                     <Lock className="w-7 h-7 text-red-600" />
                                 </div>
