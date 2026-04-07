@@ -80,7 +80,7 @@ export default function PagoPage() {
             console.log('💳 [Payment] Initiating payment session (Redirect Method)...');
 
             // Build redirect URL
-            const redirectUrl = `${window.location.origin}/publicar/exito`;
+            const redirectUrl = `${window.location.origin}/publicar/exito?draftId=${propertyId}`;
 
             // Call server action to get checkout URL
             const result = await initiatePaymentSession(

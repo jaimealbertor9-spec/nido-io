@@ -143,8 +143,6 @@ export async function initiatePaymentSession(
         const integrityHash = createHash('sha256').update(signatureChain).digest('hex');
         console.log('🔐 [Payment] Integrity hash computed for reference:', reference);
 
-        const isLocal = redirectUrl.includes('localhost');
-
         const baseParams = new URLSearchParams({
             'public-key': publicKey,
             'currency': CURRENCY,
@@ -152,10 +150,9 @@ export async function initiatePaymentSession(
             'reference': reference,
         });
 
-        // WAF SSRF Protection: Wompi blocks 'localhost'. Omit redirect-url in dev.
-        if (!isLocal) {
-            baseParams.append('redirect-url', redirectUrl);
-        }
+        // Always append redirect-url so user returns to our app after payment.
+        // Note: Wompi may reject localhost URLs with a 403 during local dev.
+        baseParams.append('redirect-url', redirectUrl);
 
         // Append signature:integrity manually — URLSearchParams encodes ':' to '%3A' which Wompi's WAF rejects with 403
         const checkoutUrl = `https://checkout.wompi.co/p/?${baseParams.toString()}&signature:integrity=${integrityHash}`;
