@@ -3,6 +3,7 @@ import { getServiceRoleClient } from '@/lib/supabase-admin';
 import { resend } from '@/lib/resend';
 import { PaymentSuccessEmail } from '@/components/emails/PaymentSuccessEmail';
 import { logSystemEvent } from '@/lib/logger';
+import { WALLET_EXPIRY_DAYS } from '@/app/actions/constants';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // WOMPI WEBHOOK HANDLER - FAIL-CLOSED SECURITY
@@ -251,6 +252,7 @@ export async function POST(request: Request): Promise<Response> {
               pago_id: pago.id,
               creditos_total: pkg.creditos,
               creditos_usados: 0,
+              expires_at: new Date(Date.now() + WALLET_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString(),
             })
             .select('id')
             .single();
@@ -536,8 +538,7 @@ async function handlePackagePurchase(
     // 4. FULFILL ASSET (with atomic concurrency guards)
     // ─────────────────────────────────────────────────────────────────────
     if (pkg.tipo === 'paquete') {
-      const durationDays = pkg.duracion_anuncio_dias || 30;
-      const newExpiresAt = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
+      const newExpiresAt = new Date(Date.now() + WALLET_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
       const { data: existingWallet } = await supabase
         .from('user_wallets')

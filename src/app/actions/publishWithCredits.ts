@@ -2,6 +2,7 @@
 
 import { getServiceRoleClient } from '../../lib/supabase-admin';
 import { PackageData } from './action-types';
+import { WALLET_EXPIRY_DAYS } from './constants';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // publishWithCredits — Consumes 1 credit (wallet or free tier) to publish
@@ -142,10 +143,10 @@ export async function publishWithCredits(
             // EXPLICIT 15 DAYS FALLBACK FOR FREE TIER
             duracionDias = freePkg.duracion_anuncio_dias || 15;
 
-            // Calculate expiration specifically for the wallet
+            // Calculate expiration specifically for the wallet (always 30 days)
             const now = new Date();
             const expirationWallet = new Date(now);
-            expirationWallet.setDate(expirationWallet.getDate() + duracionDias);
+            expirationWallet.setDate(expirationWallet.getDate() + WALLET_EXPIRY_DAYS);
 
             // Create wallet for free tier with 1 credit already consumed
             const { data: newWallet, error: walletErr } = await supabase

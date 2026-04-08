@@ -141,7 +141,7 @@ export default function PlanesNidoPage() {
                             <ul className="space-y-4 flex-1 mb-8">
                                 <li className="flex items-start gap-3 text-sm text-gray-600">
                                     <CheckCircle className="w-5 h-5 text-gray-400 shrink-0" />
-                                    <span>1 propiedad publicada por 30 días</span>
+                                    <span>1 propiedad publicada por 15 días</span>
                                 </li>
                                 <li className="flex items-start gap-3 text-sm text-gray-600">
                                     <Info className="w-5 h-5 text-amber-500 shrink-0" />

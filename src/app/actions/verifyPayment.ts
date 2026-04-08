@@ -8,6 +8,7 @@
 import { revalidatePath } from 'next/cache';
 import { getServiceRoleClient } from '@/lib/supabase-admin';
 import type { VerifyPaymentResult } from './action-types';
+import { WALLET_EXPIRY_DAYS } from './constants';
 
 // Wompi API config - Detect based on key prefix, NOT environment variables
 // This prevents mismatch when using test keys in production environment
@@ -336,6 +337,7 @@ async function processTransactionStatus(
                             pago_id: finalPagoId,           // #8 Fix: persist pago_id
                             creditos_total: pkg.creditos,
                             creditos_usados: 0,             // #9 Fix: start at 0
+                            expires_at: new Date(Date.now() + WALLET_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString(),
                         })
                         .select('id')
                         .single();
