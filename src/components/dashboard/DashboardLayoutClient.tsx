@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, Suspense } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useAuth } from '@/components/AuthProvider';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
     LayoutDashboard, Building, BarChart2, MessageSquare,
     Search, Plus, Bell, LogOut, Zap, ArrowLeft, Menu
@@ -18,6 +18,7 @@ export default function DashboardLayoutClient({ children }: { children: React.Re
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
     const pathname = usePathname();
     const router = useRouter();
+    const searchParams = useSearchParams();
 
     const avatarUrl = user?.user_metadata?.avatar_url || user?.user_metadata?.picture || profile?.avatar_url;
     const displayName = profile?.nombre || user?.user_metadata?.full_name || user?.email?.split('@')[0];
@@ -97,10 +98,21 @@ export default function DashboardLayoutClient({ children }: { children: React.Re
                             </div>
                         ) : (
                             <div className="flex-1 max-w-lg hidden sm:block">
-                                <div className="relative">
-                                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Search className="text-gray-400 w-5 h-5" /></span>
-                                    <input className="block w-full pl-10 pr-3 py-2.5 border-none rounded-xl leading-5 bg-white text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#1A56DB]/50 sm:text-sm shadow-sm transition-all" placeholder="Buscar propiedades..." type="text" />
-                                </div>
+                                <Suspense fallback={<div className="w-full h-10 animate-pulse bg-gray-200 rounded-xl"></div>}>
+                                    <form className="relative" onSubmit={(e) => {
+                                        e.preventDefault();
+                                        const formData = new FormData(e.currentTarget);
+                                        const term = (formData.get('q') as string || '').trim();
+                                        if (term) {
+                                            router.push(`/mis-inmuebles?q=${encodeURIComponent(term)}`);
+                                        } else {
+                                            router.push('/mis-inmuebles');
+                                        }
+                                    }}>
+                                        <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Search className="text-gray-400 w-5 h-5" /></span>
+                                        <input name="q" defaultValue={searchParams?.get('q') || ''} className="block w-full pl-10 pr-3 py-2.5 border-none rounded-xl leading-5 bg-white text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#1A56DB]/50 sm:text-sm shadow-sm transition-all" placeholder="Buscar propiedades..." type="text" />
+                                    </form>
+                                </Suspense>
                             </div>
                         )}
                     </div>

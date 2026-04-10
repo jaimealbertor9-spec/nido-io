@@ -8,7 +8,7 @@ import { getUserPublishContext, getUserWallets } from '@/app/actions/publishCont
  * Fetches user data and properties on the server.
  * Passes everything as props to Client Component.
  */
-export default async function DashboardPage() {
+export default async function DashboardPage({ searchParams }: { searchParams: { [key: string]: string | string[] | undefined } }) {
     const supabase = createServerSupabaseClient();
 
     // Get authenticated user (layout already validated, but double-check)
@@ -25,12 +25,22 @@ export default async function DashboardPage() {
         .eq('id', user.id)
         .single();
 
-    // Fetch user's properties
-    const { data: properties, error: propsError } = await supabase
+    // Fetch user's properties (with optional search filter)
+    let query = supabase
         .from('inmuebles')
         .select('*, inmueble_imagenes(*)')
-        .eq('propietario_id', user.id)
-        .order('created_at', { ascending: false });
+        .eq('propietario_id', user.id);
+
+    const rawQ = searchParams?.q as string | undefined;
+    if (rawQ) {
+        // Sanitize commas and parentheses — PostgREST reserves these in .or() syntax
+        const safeQ = rawQ.replace(/[,()]/g, ' ').trim();
+        if (safeQ) {
+            query = query.or(`titulo.ilike.%${safeQ}%,ciudad.ilike.%${safeQ}%,barrio.ilike.%${safeQ}%`);
+        }
+    }
+
+    const { data: properties, error: propsError } = await query.order('created_at', { ascending: false });
 
     if (propsError) {
         console.error('Error fetching properties:', propsError.message);
