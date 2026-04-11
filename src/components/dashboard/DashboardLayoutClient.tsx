@@ -7,7 +7,7 @@ import { useAuth } from '@/components/AuthProvider';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
     LayoutDashboard, Building, BarChart2, MessageSquare,
-    Search, Plus, Bell, LogOut, Zap, ArrowLeft, Menu
+    Search, Plus, Bell, LogOut, Zap, ArrowLeft, Menu, User
 } from 'lucide-react';
 import { signOutAction } from '@/app/mis-inmuebles/actions';
 import NotificationBell from './NotificationBell';
@@ -140,6 +140,9 @@ export default function DashboardLayoutClient({ children }: { children: React.Re
                                             <p className="text-sm font-bold text-gray-800 truncate">{displayName}</p>
                                             <p className="text-xs text-gray-500 truncate">{user?.email}</p>
                                         </div>
+                                        <Link href="/mis-inmuebles/perfil" className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 transition-colors" onClick={() => setIsUserMenuOpen(false)}>
+                                            <User className="w-4 h-4" /> Mi Perfil
+                                        </Link>
                                         <form action={signOutAction}>
                                             <button type="submit" className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 transition-colors">
                                                 <LogOut className="w-4 h-4" /> Cerrar Sesión
