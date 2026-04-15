@@ -13,6 +13,7 @@ interface ProfileClientProps {
         nombre: string | null;
         telefono: string | null;
         avatar_url: string | null;
+        tipo_usuario: string | null;
         [key: string]: unknown;
     } | null;
     user: User;
@@ -143,7 +144,12 @@ export default function ProfileClient({ profile, user }: ProfileClientProps) {
                             </div>
                         </div>
                         <h2 className="text-xl font-bold mb-1">{displayName}</h2>
-                        <p className="text-slate-500 text-sm mb-6">{displayEmail}</p>
+                        <p className="text-slate-500 text-sm mb-2">{displayEmail}</p>
+                        <div className="flex justify-center mb-6">
+                            <span className="px-3 py-1 bg-blue-100 text-blue-800 text-xs font-bold uppercase tracking-wider rounded-full border border-blue-200">
+                                {profile?.tipo_usuario || 'Usuario'}
+                            </span>
+                        </div>
                         <div className="space-y-4">
                             {/* Hidden file input */}
                             <input
