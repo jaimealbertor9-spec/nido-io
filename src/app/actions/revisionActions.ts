@@ -9,7 +9,7 @@ export async function getPendingRevision(inmuebleId: string) {
 
     try {
         const supabase = createServerSupabaseClient();
-        
+
         // Verify user owns the property
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return null;
@@ -19,7 +19,7 @@ export async function getPendingRevision(inmuebleId: string) {
             .select('propietario_id')
             .eq('id', inmuebleId)
             .single();
-            
+
         if (propError || property?.propietario_id !== user.id) {
             return null; // Not authorized
         }
@@ -65,7 +65,7 @@ export async function markRevisionAsCorrected(inmuebleId: string) {
 
     try {
         const supabase = createServerSupabaseClient();
-        
+
         // Verify user owns the property
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return { success: false, error: 'Unauthorized' };
@@ -75,7 +75,7 @@ export async function markRevisionAsCorrected(inmuebleId: string) {
             .select('propietario_id')
             .eq('id', inmuebleId)
             .single();
-            
+
         if (propError || property?.propietario_id !== user.id) {
             return { success: false, error: 'Unauthorized to modify this property' };
         }

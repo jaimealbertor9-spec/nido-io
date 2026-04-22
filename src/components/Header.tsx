@@ -39,12 +39,13 @@ export default function Header() {
         '/bienvenidos',         // Welcome/marketing
         '/verificacion',        // User verification tunnel
         '/admin/verificaciones', // Admin verification panel
-        '/mis-inmuebles'        // Dashboard (has its own sidebar)
+        '/mis-inmuebles',       // Dashboard (has its own sidebar)
+        '/buscar'               // AI Search (immersive full-viewport)
     ];
 
     // Null-safe check: pathname can be null during SSR
     const currentPath = pathname ?? '';
-    const isHidden = hiddenRoutes.includes(currentPath) || currentPath.startsWith('/publicar') || currentPath.startsWith('/mis-inmuebles');
+    const isHidden = hiddenRoutes.includes(currentPath) || currentPath.startsWith('/publicar') || currentPath.startsWith('/mis-inmuebles') || currentPath.startsWith('/buscar');
 
     return (
         <header className={`sticky top-0 z-50 bg-white/95 backdrop-blur-sm shadow-sm border-b border-gray-100 ${isHidden ? 'hidden' : ''}`}>
