@@ -33,6 +33,7 @@ export type SearchResult = {
     closest_poi_name?: string;
     closest_poi_distance_m?: number;
     image_url?: string;
+    exact_match_level?: number;
 };
 
 export type SearchIntent = {

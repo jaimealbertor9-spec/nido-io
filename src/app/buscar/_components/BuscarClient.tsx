@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import Image from 'next/image';
-import { ChatMessage, SearchIntent } from './types';
+import { ChatMessage, SearchIntent, SearchResult } from './types';
 import { searchWithAI } from '@/app/actions/searchWithAI';
 import type { ConversationEntry } from '@/app/actions/searchWithAI';
 import ChatPanel from './ChatPanel';
@@ -54,7 +54,7 @@ export default function BuscarClient() {
         if ('geolocation' in navigator) {
             navigator.geolocation.getCurrentPosition(
                 (pos) => setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-                () => {}
+                () => { }
             );
         }
     }, []);
@@ -201,11 +201,10 @@ export default function BuscarClient() {
                     <button
                         onClick={() => setLayoutMode('chat')}
                         title="Chat IA"
-                        className={`w-11 h-11 rounded-full flex items-center justify-center transition-all duration-200 ${
-                            layoutMode === 'chat'
+                        className={`w-11 h-11 rounded-full flex items-center justify-center transition-all duration-200 ${layoutMode === 'chat'
                                 ? 'bg-white/80 text-surface-tint shadow-sm border border-white/90'
                                 : 'text-on-surface/40 hover:text-on-surface/70 hover:bg-white/50'
-                        }`}
+                            }`}
                     >
                         <MessageSquare className="w-5 h-5" />
                     </button>
@@ -213,11 +212,10 @@ export default function BuscarClient() {
                     <button
                         onClick={() => setLayoutMode('map')}
                         title="Ver en el mapa"
-                        className={`w-11 h-11 rounded-full flex items-center justify-center transition-all duration-200 relative ${
-                            layoutMode === 'map'
+                        className={`w-11 h-11 rounded-full flex items-center justify-center transition-all duration-200 relative ${layoutMode === 'map'
                                 ? 'bg-white/80 text-surface-tint shadow-sm border border-white/90'
                                 : 'text-on-surface/40 hover:text-on-surface/70 hover:bg-white/50'
-                        }`}
+                            }`}
                     >
                         <Map className="w-5 h-5" />
                         {results.length > 0 && (
@@ -275,7 +273,7 @@ export default function BuscarClient() {
                         <ResultsPanel
                             results={results}
                             viewMode="map"
-                            onViewModeChange={() => {}}
+                            onViewModeChange={() => { }}
                             selectedPropertyId={selectedPropertyId}
                             onSelectProperty={setSelectedPropertyId}
                             userLocation={userLocation}

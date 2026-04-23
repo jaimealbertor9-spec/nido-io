@@ -34,6 +34,8 @@ const PROPERTY_TYPES: PropertyOption[] = [
     { id: 'bodega', label: 'Bodega', icon: '/garaje.png', isImage: true },
     { id: 'edificio', label: 'Edificio', icon: '/edificio.png', isImage: true },
     { id: 'casa_lote', label: 'Casa Lote', icon: '/plano-de-la-casa.png', isImage: true },
+    { id: 'consultorio', label: 'Consultorio', icon: '/consultorio.png', isImage: true },
+    { id: 'finca', label: 'Finca', icon: '/finca.png', isImage: true },
 ];
 
 // Loading component for Suspense fallback
@@ -149,8 +151,8 @@ function TipoContent() {
                     </p>
                 </div>
 
-                {/* Property Cards Grid - 5x2 Panoramic Layout */}
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4 w-full">
+                {/* Property Cards Grid - 6x2 Panoramic Layout */}
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3 sm:gap-4 w-full">
                     {PROPERTY_TYPES.map((type) => {
                         const isSelected = selectedType === type.id;
 

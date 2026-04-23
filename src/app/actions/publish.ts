@@ -20,7 +20,8 @@ export async function createPropertyDraft(type: string): Promise<string> {
 
     const validTypes = [
         'apartamento', 'casa', 'habitacion', 'local', 'lote',
-        'oficina', 'apartaestudio', 'bodega', 'edificio', 'casa_lote'
+        'oficina', 'apartaestudio', 'bodega', 'edificio', 'casa_lote',
+        'consultorio', 'finca'
     ];
     if (!validTypes.includes(type)) throw new Error(`Invalid type: ${type}`);
 

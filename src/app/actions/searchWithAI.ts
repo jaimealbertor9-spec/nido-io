@@ -64,6 +64,10 @@ const searchTool = {
                     items: { type: SchemaType.STRING as const },
                     description: 'Required amenities. Valid: Piscina, Gimnasio, Parqueadero, Balcón, Terraza, Vigilancia, Cocina Integral, Patio, Zona BBQ, Salón Comunal, Ascensor, Depósito',
                 },
+                lifestyle_query: {
+                    type: SchemaType.STRING as const,
+                    description: 'A free-text string capturing lifestyle features or contextual locations (e.g., "cerca al hospital", "buen transporte", "parque", "zona tranquila"). Only provide this if the user asks for contextual features beyond standard amenities.',
+                },
                 use_user_location: {
                     type: SchemaType.BOOLEAN as const,
                     description: 'Set to true ONLY when the user explicitly wants properties near their current physical location (e.g., "cerca de mí", "por aquí", "nearby"). Always false by default.',
@@ -92,27 +96,37 @@ NORMALIZACIÓN DE CIUDADES (CRÍTICO — aplica SIEMPRE antes de llamar la funci
 - "Ibague" → siempre devuelve "Ibagué"
 - Ciudades activas en la base de datos: Bogotá, Cartagena, Libano, Ibagué, Santa Marta
 
-DICCIONARIO DE SINÓNIMOS (CRÍTICO):
-1. Amenidades (Map to exact array strings):
+DICCIONARIO DE SINÓNIMOS Y JERGA COLOMBIANA (CRÍTICO):
+1. Dinero y Precios (DEBES TRADUCIR A NÚMEROS EXACTOS ANTES DE LLAMAR LA FUNCIÓN):
+   - "lucas" → Miles de pesos (ej. "2000 lucas" = 2000000, "500 lucas" = 500000)
+   - "palos", "millones", "M" → Millones de pesos (ej. "2 palos" = 2000000, "1.5 palos" = 1500000)
+   - "barato", "económico" → precio_max: 1000000
+2. Amenidades Estándar (Map to exact array strings):
    - "parqueo", "garaje", "estacionamiento" → Usa "Parqueadero" o "Garaje"
    - "gym", "gimnasio" → Usa "Gimnasio"
    - "celaduría", "portería", "seguridad" → Usa "Vigilancia"
-2. Tipos de Inmueble:
+3. Tipos de Inmueble:
    - "depa", "apto" → "apartamento"
    - "cuarto", "pieza" → "habitacion"
-   - "local", "consultorio", "espacio de trabajo" → "oficina" o "local"
-3. Tipos de Negocio:
+   - "espacio de trabajo" → "oficina" o "local"
+   - "campo", "descanso", "rural" → "finca"
+   - "médico", "salud", "odontología", "clinica" → "consultorio"
+4. Tipos de Negocio:
    - "comprar", "adquirir", "en venta" → "venta"
    - "alquilar", "rentar", "arrendar" → "arriendo"
-4. Regla de Barrios (Prevención de Errores SQL):
-   - El SQL hace match exacto. Si el usuario dice un barrio genérico (ej. "Chicó") y no estás 100% seguro del nombre oficial (ej. "Chicó Norte II"), ES MEJOR NO ENVIAR EL PARÁMETRO BARRIO y solo enviar la ciudad para evitar devolver 0 resultados.
+5. Estilo de Vida y Contexto (lifestyle_query):
+   - Para características no estándar o ubicación contextual (ej. "cerca al hospital", "con buen transporte", "universidad", "zona tranquila"), usa el parámetro 'lifestyle_query' (ej. "hospital transporte").
+6. Regla de Barrios (Prevención de Errores SQL):
+   - El SQL hace match exacto. Si el usuario dice un barrio genérico y no estás 100% seguro del nombre oficial, NO ENVÍES EL PARÁMETRO BARRIO y solo envía la ciudad.
 
-REGLAS DE EXTRACCIÓN:
-- "Barato" o "económico" → precio_max: 1000000
-- "2 millones" o "2M" → interpreta como 2000000
-- "3 cuartos" → habitaciones_min: 3
-- "Por días" o "temporal" → tipo_negocio: "dias"
-- Si el usuario no especifica tipo_negocio, asume "arriendo"
+REGLA DEL PRECIO SAGRADO Y NEGOCIACIÓN (exact_match_level):
+- El sistema utiliza una búsqueda en cascada ("Hierarchical Fallback").
+- Cuando llamas a search_properties, los resultados incluirán la propiedad 'exact_match_level'.
+- exact_match_level 1: Match Exacto. (Todo coincide)
+- exact_match_level 2: Se ignoraron las amenidades y lifestyle para encontrar opciones.
+- exact_match_level 3: Se ignoró el tipo de inmueble para encontrar opciones.
+- ¡EL PRECIO Y LA CIUDAD SON SAGRADOS! Nunca debes ofrecer resultados fuera del presupuesto o ciudad a menos que le preguntes primero al usuario.
+- Si recibes resultados con exact_match_level > 1, ADOPTA UNA POSTURA DE NEGOCIACIÓN: "No encontré un apartamento con piscina en tu presupuesto, pero encontré estas opciones que te podrían interesar. ¿Quieres revisarlas o prefieres que ajustemos el precio?"
 
 REGLA DE GEOLOCALIZACIÓN:
 - use_user_location = true SOLO si el usuario dice explícitamente "cerca de mí", "por aquí", "en mi zona", "nearby"
@@ -230,6 +244,9 @@ export async function searchWithAI(
         if (Array.isArray(args.amenities) && args.amenities.length > 0) {
             rpcParams.p_amenities = args.amenities;
         }
+        if (args.lifestyle_query) {
+            rpcParams.p_lifestyle_query = args.lifestyle_query;
+        }
 
         // Geolocation — only when explicitly requested by Gemini
         if (args.use_user_location === true && userLocation) {
@@ -272,6 +289,7 @@ export async function searchWithAI(
             amenities: (row.amenities as string[]) ?? [],
             estrato: Number(row.estrato),
             image_url: (row.image_url as string) ?? undefined,
+            exact_match_level: row.exact_match_level ? Number(row.exact_match_level) : undefined,
         }));
 
         console.log('✅ [searchWithAI] Found', results.length, 'properties');
@@ -291,9 +309,17 @@ export async function searchWithAI(
         }
 
         // ── Feed results back to Gemini for natural language summary ──
-        const resultSummary = results.length > 0
-            ? `Se encontraron ${results.length} propiedades. Precios desde $${Math.min(...results.map(r => r.precio)).toLocaleString('es-CO')} hasta $${Math.max(...results.map(r => r.precio)).toLocaleString('es-CO')}. Tipos: ${Array.from(new Set(results.map(r => r.tipo_inmueble))).join(', ')}. Ciudades: ${Array.from(new Set(results.map(r => r.ciudad))).join(', ')}.`
-            : 'No se encontraron propiedades con los filtros aplicados.';
+        let resultSummary = 'No se encontraron propiedades con los filtros aplicados.';
+        if (results.length > 0) {
+            const minPrice = Math.min(...results.map(r => r.precio)).toLocaleString('es-CO');
+            const maxPrice = Math.max(...results.map(r => r.precio)).toLocaleString('es-CO');
+            const tipos = Array.from(new Set(results.map(r => r.tipo_inmueble))).join(', ');
+            const ciudades = Array.from(new Set(results.map(r => r.ciudad))).join(', ');
+            const levels = Array.from(new Set(results.map(r => r.exact_match_level))).filter(l => l != null);
+            const worstLevel = levels.length > 0 ? Math.max(...(levels as number[])) : 1;
+
+            resultSummary = `Se encontraron ${results.length} propiedades. Precios desde $${minPrice} hasta $${maxPrice}. Tipos: ${tipos}. Ciudades: ${ciudades}. exact_match_level: ${worstLevel}.`;
+        }
 
         // Second call — send functionResponse back to Gemini for summary
         const summaryContents = [
