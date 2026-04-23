@@ -1,0 +1,28 @@
+# WOMPI CLEANUP PLAN: RESEND ERADICATION
+
+## THE OBJECTIVE
+We are executing a surgical strike to remove all Resend integration from the system. The immediate goal is to fix the Vercel build error (`Error: Missing API key. Pass it to the constructor new Resend("re_123")`) caused by the Resend class instantiation inside `src/app/api/webhooks/wompi/route.ts` when no API key is present in the environment. The Resend email service was an experimental feature that has been canceled.
+
+## THE CONSTRAINTS
+The core Wompi payment processing logic MUST remain 100% intact and unaffected. We must ONLY remove the email-sending logic, ensuring that we do not break transaction validations, database updates, package fulfillments, or webhook responses.
+
+## THE TARGETS
+The following sections in `src/app/api/webhooks/wompi/route.ts` will be surgically extracted:
+
+1. **Imports (Lines 3-4):**
+   - `import { resend } from '@/lib/resend';`
+   - `import { PaymentSuccessEmail } from '@/components/emails/PaymentSuccessEmail';`
+
+2. **POST function Email Dispatch (Lines 314-342):**
+   - The entire `STEP 4: SEND ONE CONFIRMATION EMAIL` block, including the lookup for `propertyName`, `propertyLocation`, and `propertyPrice`, as well as the call to `sendPaymentConfirmationEmail()`.
+
+3. **Package Purchase Email Dispatch (Lines 636-652):**
+   - The entire `6. Email` block inside `handlePackagePurchase()`, including the user lookup and the call to `sendPackageConfirmationEmail()`.
+
+4. **Helper Function 1 (Lines 403-435):**
+   - The entire `sendPaymentConfirmationEmail()` helper function and its documentation block.
+
+5. **Helper Function 2 (Lines 661-701):**
+   - The entire `sendPackageConfirmationEmail()` helper function and its documentation block.
+
+By removing exactly these blocks, we eliminate all Resend usage while perfectly preserving the Wompi payment lifecycle.

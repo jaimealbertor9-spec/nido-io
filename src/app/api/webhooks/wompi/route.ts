@@ -1,7 +1,5 @@
 import { createHash, timingSafeEqual } from 'crypto';
 import { getServiceRoleClient } from '@/lib/supabase-admin';
-import { resend } from '@/lib/resend';
-import { PaymentSuccessEmail } from '@/components/emails/PaymentSuccessEmail';
 import { logSystemEvent } from '@/lib/logger';
 import { WALLET_EXPIRY_DAYS } from '@/app/actions/constants';
 
@@ -311,35 +309,6 @@ export async function POST(request: Request): Promise<Response> {
       pagoId: pago.id, inmuebleId: pago.inmueble_id, reference
     });
 
-    // ═══════════════════════════════════════════════════════════════════
-    // STEP 4: SEND ONE CONFIRMATION EMAIL (best-effort, never throws)
-    // ═══════════════════════════════════════════════════════════════════
-    let propertyName: string | undefined;
-    let propertyLocation: string | undefined;
-    let propertyPrice: number | undefined;
-
-    if (pago.inmueble_id) {
-      const { data: propertyData } = await supabase
-        .from('inmuebles')
-        .select('titulo, ciudad, precio')
-        .eq('id', pago.inmueble_id)
-        .single();
-
-      if (propertyData) {
-        propertyName = propertyData.titulo || undefined;
-        propertyLocation = propertyData.ciudad || undefined;
-        propertyPrice = propertyData.precio || undefined;
-      }
-    }
-
-    await sendPaymentConfirmationEmail(
-      transaction.customer_email,
-      transaction.customer_data?.full_name || 'Usuario',
-      propertyName,
-      propertyLocation,
-      propertyPrice
-    );
-
     await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Webhook processing complete', { pagoId: pago.id, reference });
 
     return Response.json({
@@ -398,39 +367,6 @@ async function updateInmuebleAtomic(supabase: any, inmuebleId: string, pagoId: s
 
   console.log('[WOMPI WEBHOOK] ✅ Inmueble fulfilled to en_revision | Expiration:', expiration.toISOString());
   return true;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HELPER: Send payment confirmation email
-// ─────────────────────────────────────────────────────────────────────────────
-async function sendPaymentConfirmationEmail(
-  email: string | undefined,
-  nombre: string,
-  propertyName?: string,
-  propertyLocation?: string,
-  propertyPrice?: number
-) {
-  if (!email) {
-    console.log('[WOMPI WEBHOOK] ⚠️ No customer email provided, skipping email notification');
-    return;
-  }
-
-  try {
-    const { data, error } = await resend.emails.send({
-      from: 'Nido <onboarding@resend.dev>',
-      to: email,
-      subject: '¡Pago Recibido! Tu inmueble está en revisión',
-      react: PaymentSuccessEmail({ nombre, propertyName, propertyLocation, propertyPrice }),
-    });
-
-    if (error) {
-      console.error('[WOMPI WEBHOOK] ⚠️ Email failed to send:', error);
-    } else {
-      console.log('[WOMPI WEBHOOK] 📧 Email sent successfully:', data?.id);
-    }
-  } catch (emailError: any) {
-    console.error('[WOMPI WEBHOOK] ⚠️ Email failed to send:', emailError.message);
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -633,70 +569,12 @@ async function handlePackagePurchase(
 
   await logSystemEvent('INFO', 'WOMPI_WEBHOOK', 'Package payment closed AFTER asset fulfillment', { pagoId, reference });
 
-  // ─────────────────────────────────────────────────────────────────────
-  // 6. Email (best-effort, never throws)
-  // ─────────────────────────────────────────────────────────────────────
-  const { data: emailUser } = await supabase
-    .from('usuarios')
-    .select('email, nombre')
-    .eq('id', userId)
-    .maybeSingle();
-
-  await sendPackageConfirmationEmail(
-    transaction.customer_email || emailUser?.email,
-    emailUser?.nombre || transaction.customer_data?.full_name || 'Usuario',
-    pkg.nombre,
-    pkg.tipo,
-    pkg.creditos
-  );
-
   return Response.json({
     success: true,
     message: `Package '${pkg.nombre}' fulfilled successfully`,
     pagoId,
     userId
   });
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HELPER: Send package/subscription confirmation email
-// ─────────────────────────────────────────────────────────────────────────────
-async function sendPackageConfirmationEmail(
-  email: string | undefined,
-  nombre: string,
-  packageName: string,
-  packageType: string,
-  credits: number
-) {
-  if (!email) {
-    console.log('[WOMPI WEBHOOK] ⚠️ No email for package confirmation, skipping');
-    return;
-  }
-
-  try {
-    const subject = packageType === 'suscripcion'
-      ? `¡Suscripción ${packageName} activada!`
-      : `¡Paquete ${packageName} adquirido — ${credits} crédito(s)!`;
-
-    // Use a simple text email for now; a React template can be added later
-    await resend.emails.send({
-      from: 'Nido <onboarding@resend.dev>',
-      to: email,
-      subject,
-      html: `
-        <div style="font-family: sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
-          <h2 style="color: #1A56DB;">¡Hola ${nombre}!</h2>
-          <p>Tu ${packageType === 'suscripcion' ? 'suscripción' : 'paquete'} <strong>${packageName}</strong> ha sido activado exitosamente.</p>
-          ${packageType === 'paquete' ? `<p>Ahora tienes <strong>${credits} crédito(s)</strong> disponibles para publicar inmuebles.</p>` : '<p>Tu suscripción ilimitada está activa por 30 días.</p>'}
-          <p style="margin-top: 20px;"><a href="https://nido.io/mis-inmuebles" style="background: #1A56DB; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Ir al Dashboard</a></p>
-          <p style="color: #888; font-size: 12px; margin-top: 30px;">— Equipo Nido</p>
-        </div>
-      `
-    });
-    console.log('[WOMPI WEBHOOK] 📧 Package confirmation email sent to:', email);
-  } catch (err: any) {
-    console.error('[WOMPI WEBHOOK] ⚠️ Package email failed:', err.message);
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
